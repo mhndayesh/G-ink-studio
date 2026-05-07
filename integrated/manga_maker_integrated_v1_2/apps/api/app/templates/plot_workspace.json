@@ -1,0 +1,348 @@
+{
+  "story_id": "story_001",
+  "version_id": "v001",
+  "file_type": "plot_workspace",
+  "state_type": "template_state",
+  "workspace_id": "workspace_001",
+  "linked_files": {
+    "master_story_file": "master_story.json",
+    "characters_file": "characters.json",
+    "plot_outline_file": "plot_outline.json",
+    "memory_system_file": "memory_system.json",
+    "chapter_script_output_file": "chapter_script.json"
+  },
+  "workspace_status": {
+    "status": "not_started",
+    "current_stage": "free_writing",
+    "target_arc_id": "arc_001",
+    "target_chapter_id": "ch_001",
+    "target_scene_id": "",
+    "created_from_version_id": "v001",
+    "will_create_version_after_approval": true,
+    "next_version_id_after_approval": ""
+  },
+  "user_free_writing": {
+    "note_to_user": "Write freely here. You can write a rough idea, chapter summary, scene idea, fight, dialogue, twist, or anything. The system will understand it and detect story consequences.",
+    "text": "",
+    "input_type": {
+      "selected": "",
+      "options": [
+        "Rough Idea",
+        "Chapter Summary",
+        "Scene Idea",
+        "Dialogue Idea",
+        "Fight Scene",
+        "Relationship Scene",
+        "Twist Idea",
+        "Ending Idea",
+        "Arc Idea",
+        "Custom"
+      ]
+    },
+    "user_intent_notes": "",
+    "do_not_change_these_parts": [],
+    "user_priority": {
+      "selected": "",
+      "options": [
+        "Keep My Writing As Much As Possible",
+        "Make It More Dramatic",
+        "Make It More Emotional",
+        "Make It More Action Focused",
+        "Make It More Mysterious",
+        "Make It More Manga-Like",
+        "Custom"
+      ]
+    }
+  },
+  "ai_completion": {
+    "is_enabled": false,
+    "button_label": "AI Completion / Expand Writing",
+    "rule": "If enabled, the LLM expands the user's basic writing before consequence detection, while preserving the user's intent.",
+    "expansion_mode": {
+      "selected": "",
+      "options": [
+        "Light Expansion",
+        "Medium Expansion",
+        "Heavy Expansion",
+        "Add Manga Visual Detail",
+        "Add Dialogue",
+        "Add Emotional Depth",
+        "Add Action Detail",
+        "Custom"
+      ]
+    },
+    "expanded_text": "",
+    "user_can_accept_edit_or_reject": true,
+    "accepted_expanded_text": false,
+    "final_text_used_for_analysis": "",
+    "mandatory_order_rule": "If enabled, AI completion/expansion happens before consequence detection. If disabled, consequence detection runs directly on user_free_writing.text."
+  },
+  "mandatory_analysis_after_writing": {
+    "extract_consequences": true,
+    "detect_character_changes": true,
+    "detect_relationship_changes": true,
+    "detect_world_changes": true,
+    "detect_faction_changes": true,
+    "detect_threat_changes": true,
+    "detect_power_changes": true,
+    "detect_reputation_changes": true,
+    "detect_plot_thread_changes": true,
+    "detect_continuity_risks": true,
+    "ask_only_necessary_follow_up_questions": true,
+    "require_user_confirmation_before_save": true,
+    "runs_after_ai_completion_if_enabled": true,
+    "runs_even_if_ai_completion_disabled": true
+  },
+  "context_used_for_analysis": {
+    "master_story_context": {
+      "world_rules_used": [],
+      "factions_used": [],
+      "threats_used": [],
+      "world_state_used": [],
+      "ending_direction_used": ""
+    },
+    "characters_context": {
+      "characters_detected": [],
+      "relationships_detected": [],
+      "powers_detected": [],
+      "faction_alignments_detected": []
+    },
+    "plot_outline_context": {
+      "arc_used": "",
+      "chapter_used": "",
+      "scene_used": "",
+      "plot_threads_used": []
+    },
+    "memory_context": {
+      "current_version_id": "v001",
+      "graph_facts_used": [],
+      "vector_memories_used": [],
+      "continuity_warnings": []
+    }
+  },
+  "detected_story_events": [
+    {
+      "detected_event_id": "det_evt_001",
+      "event_type": "",
+      "confidence": "",
+      "evidence_from_user_text": "",
+      "target_file": "",
+      "target_entity_id": "",
+      "target_entity_name": "",
+      "requires_user_decision": false,
+      "reason_question_is_needed": "",
+      "suggested_event_summary": "",
+      "status": "pending_review"
+    }
+  ],
+  "consequence_questions": {
+    "status": "not_started",
+    "question_style": "yes_no_custom_when_possible",
+    "questions": [
+      {
+        "question_id": "cq_001",
+        "linked_detected_event_id": "det_evt_001",
+        "question": "",
+        "why_this_matters": "",
+        "options": [
+          "Yes",
+          "No",
+          "Custom"
+        ],
+        "selected": "",
+        "custom_answer": "",
+        "status": "unanswered"
+      }
+    ],
+    "question_templates": {
+      "serious_injury": {
+        "question": "This character suffered a serious injury. What should happen?",
+        "options": [
+          "Heals Quickly",
+          "Heals Slowly",
+          "Permanent Scar",
+          "Loses Power Temporarily",
+          "Loses Power Permanently",
+          "Loses Reputation",
+          "Becomes Disabled",
+          "Dies",
+          "Unknown For Now",
+          "Custom"
+        ]
+      },
+      "betrayal_or_spy_reveal": {
+        "question": "This character attacked or betrayed someone. What is the truth?",
+        "options": [
+          "Was A Spy From The Beginning",
+          "Changed Sides Now",
+          "Forced To Betray",
+          "Pretending To Betray",
+          "Secret Double Agent",
+          "Unknown For Now",
+          "Custom"
+        ]
+      },
+      "relationship_change": {
+        "question": "Should this relationship change officially?",
+        "options": [
+          "Trust Increases",
+          "Trust Decreases",
+          "They Become Allies",
+          "They Become Enemies",
+          "They Become Rivals",
+          "They Hide Their True Feelings",
+          "No Official Relationship Change",
+          "Custom"
+        ]
+      },
+      "power_change": {
+        "question": "Should this affect the character's power?",
+        "options": [
+          "Power Awakens",
+          "Power Evolves",
+          "Power Weakens",
+          "Power Is Lost Temporarily",
+          "Power Is Lost Permanently",
+          "Power Becomes Unstable",
+          "No Power Change",
+          "Custom"
+        ]
+      },
+      "world_change": {
+        "question": "Does this change the world/master story state?",
+        "options": [
+          "Yes, Update Master Story",
+          "No, Keep As Local Event",
+          "Only Foreshadow For Now",
+          "Unknown For Now",
+          "Custom"
+        ]
+      },
+      "faction_change": {
+        "question": "Does this change faction alignment or faction status?",
+        "options": [
+          "Character Joins Faction",
+          "Character Leaves Faction",
+          "Character Is Revealed As Spy",
+          "Faction Gains Power",
+          "Faction Loses Power",
+          "Faction Is Destroyed",
+          "No Faction Change",
+          "Custom"
+        ]
+      }
+    }
+  },
+  "user_answers": [
+    {
+      "question_id": "",
+      "selected": "",
+      "custom_answer": "",
+      "answer_status": "pending"
+    }
+  ],
+  "proposed_official_events": [
+    {
+      "event_id": "",
+      "event_type": "",
+      "target_file": "",
+      "target_entity_id": "",
+      "summary": "",
+      "payload": {},
+      "created_from_detected_event_id": "",
+      "created_from_question_id": "",
+      "approval_status": "pending"
+    }
+  ],
+  "proposed_json_patches": {
+    "master_story": [
+      {
+        "patch_id": "",
+        "target_file": "master_story.json",
+        "target_branch": "",
+        "operation": "",
+        "old_value": null,
+        "new_value": null,
+        "reason": "",
+        "approval_status": "pending"
+      }
+    ],
+    "characters": [
+      {
+        "patch_id": "",
+        "target_file": "characters.json",
+        "target_branch": "",
+        "operation": "",
+        "old_value": null,
+        "new_value": null,
+        "reason": "",
+        "approval_status": "pending"
+      }
+    ],
+    "plot_outline": [
+      {
+        "patch_id": "",
+        "target_file": "plot_outline.json",
+        "target_branch": "",
+        "operation": "",
+        "old_value": null,
+        "new_value": null,
+        "reason": "",
+        "approval_status": "pending"
+      }
+    ],
+    "relationship_map": [
+      {
+        "patch_id": "",
+        "target_file": "characters.json",
+        "target_branch": "character_relationship_map",
+        "operation": "",
+        "old_value": null,
+        "new_value": null,
+        "reason": "",
+        "approval_status": "pending"
+      }
+    ]
+  },
+  "continuity_review": {
+    "status": "not_started",
+    "issues_found": [],
+    "warnings": [],
+    "requires_user_fix": false,
+    "fix_questions": []
+  },
+  "final_confirmation": {
+    "status": "not_ready",
+    "summary_of_detected_changes": [],
+    "summary_of_rejected_changes": [],
+    "summary_of_pending_questions": [],
+    "user_options": [
+      "Approve All",
+      "Reject All",
+      "Edit Specific Change",
+      "Go Back To Questions"
+    ],
+    "selected": "",
+    "custom_user_instruction": ""
+  },
+  "after_confirmation_actions": {
+    "create_official_events": true,
+    "generate_json_patches": true,
+    "update_master_story_if_needed": true,
+    "update_characters_if_needed": true,
+    "update_plot_outline_if_needed": true,
+    "update_relationship_map_if_needed": true,
+    "update_postgresql": true,
+    "update_knowledge_graph": true,
+    "update_vector_database": true,
+    "run_continuity_report": true,
+    "create_next_version_bundle": true,
+    "create_or_update_chapter_script": true
+  },
+  "output_links": {
+    "created_chapter_script_file": "chapter_script.json",
+    "created_events": [],
+    "created_version_bundle": ""
+  },
+  "custom_workspace_details": ""
+}

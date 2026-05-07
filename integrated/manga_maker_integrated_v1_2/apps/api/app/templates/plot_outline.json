@@ -1,0 +1,336 @@
+{
+  "story_id": "story_001",
+  "version_id": "v001",
+  "file_type": "plot_outline",
+  "state_type": "template_state",
+  "master_story_file": "master_story.json",
+  "characters_file": "characters.json",
+  "story_title": "Manga Maker System",
+  "plot_outline_setup": {
+    "note_to_user": "This file turns the master story, character profiles, and relationship map into a timeline, arcs, chapters, and scenes.",
+    "plot_status": "empty",
+    "uses_master_story": true,
+    "uses_characters": true,
+    "uses_relationship_map": true,
+    "relationship_map_note": "Uses characters.json.character_relationship_map when it is enabled; before two real major profiles exist, relationship map can remain disabled and empty."
+  },
+  "story_start_workflow": {
+    "note_to_user": "This controls how the user begins making the story after master_story.json and characters.json are ready. It keeps the process simple while using the full plot system underneath.",
+    "current_stage": "",
+    "recommended_default": "Plan First Arc Then Chapter 1",
+    "start_mode": {
+      "selected": "",
+      "options": [
+        "Start With One Chapter Only",
+        "Plan First Arc Then Chapter 1",
+        "Plan Full Story Roughly Then Chapter 1",
+        "Plan Ending First Then Chapter 1",
+        "Explore With Test Scenes First"
+      ]
+    },
+    "guided_order": [
+      "choose_narrative_structure",
+      "fill_story_arc_overview",
+      "fill_enabled_structure_outline",
+      "create_chapter_or_episode_list",
+      "create_scene_cards",
+      "write_manga_script",
+      "extract_events_after_chapter",
+      "update_memory_and_create_next_version"
+    ],
+    "simple_user_questions": [
+      "Where does the story open?",
+      "Who appears first?",
+      "What is normal life like?",
+      "What feels wrong or interesting?",
+      "What is the first conflict or tension?",
+      "What is the ending hook?"
+    ],
+    "next_output_after_scene_cards": "chapter_script.json",
+    "after_chapter_completion": {
+      "extract_events": true,
+      "update_master_story_if_world_changed": true,
+      "update_characters_if_character_changed": true,
+      "update_plot_outline": true,
+      "update_relationship_map": true,
+      "update_graph_database": true,
+      "update_vector_database": true,
+      "create_next_version_bundle": true,
+      "update_postgresql": true,
+      "run_continuity_report": true
+    }
+  },
+  "writing_workspace_link": {
+    "current_workspace_file": "plot_workspace.json",
+    "current_chapter_script_file": "chapter_script.json",
+    "workspace_status": "not_started",
+    "rule": "plot_outline.json stays as the official plot plan. plot_workspace.json holds temporary free writing, AI expansion, consequence review, and proposed patches. chapter_script.json holds the clean manga script output."
+  },
+  "linked_sources": {
+    "master_story_links": {
+      "world_rules_source": "master_story.json.world_master_rules",
+      "factions_source": "master_story.json.major_factions_and_ruling_sides",
+      "major_threat_source": "master_story.json.major_threats_and_minor_side_threats",
+      "ending_direction_source": "master_story.json.ending_direction",
+      "story_foundation_source": "master_story.json.story_foundation",
+      "world_type_source": "master_story.json.world_type"
+    },
+    "character_links": {
+      "major_profiles_source": "characters.json.created_major_character_profiles",
+      "profile_template_source": "characters.json.character_profile_template",
+      "relationship_map_source": "characters.json.character_relationship_map",
+      "main_character_structure_source": "characters.json.main_character_structure"
+    }
+  },
+  "narrative_structure": {
+    "selected": "",
+    "custom_structure": "",
+    "options": [
+      "Kishotenketsu",
+      "Three-Act Structure",
+      "Hero's Journey",
+      "Shonen Arc Structure",
+      "Training Arc",
+      "Tournament Arc",
+      "School Arc",
+      "War Arc",
+      "Mystery Arc",
+      "Horror Survival Arc",
+      "Romance Arc",
+      "Slice Of Life Episodic Arc",
+      "Villain Origin Arc",
+      "Revenge Arc",
+      "Quest Arc",
+      "Political Intrigue Arc",
+      "Multi-POV Ensemble Arc",
+      "Hybrid",
+      "Custom"
+    ],
+    "structure_notes": {
+      "Kishotenketsu": "Ki = introduction, Sho = development, Ten = twist or turn, Ketsu = conclusion. Best for manga, slice of life, mystery, emotional reveal, and twist-based structure.",
+      "Three-Act Structure": "Setup, confrontation, resolution. Best for clear conflict escalation.",
+      "Hero's Journey": "Departure, trials, transformation, return. Best for adventure and growth stories.",
+      "Shonen Arc Structure": "Goal, obstacle, training or growth, enemy clash, power/strategy breakthrough, emotional resolution.",
+      "Hybrid": "Use multiple structures together."
+    }
+  },
+  "story_arc_overview": {
+    "arc_title": "",
+    "arc_number": 1,
+    "arc_type": "",
+    "arc_length_type": {
+      "selected": "",
+      "options": [
+        "One-Shot",
+        "Short Arc",
+        "Medium Arc",
+        "Long Arc",
+        "Saga",
+        "Season",
+        "Full Series",
+        "Custom"
+      ]
+    },
+    "arc_summary": "",
+    "starting_status_quo": "",
+    "main_story_question": "",
+    "central_emotional_question": "",
+    "main_external_conflict": "",
+    "main_internal_conflict": "",
+    "main_relationship_conflict": "",
+    "main_threat_used": "",
+    "minor_threats_used": [],
+    "main_factions_used": [],
+    "main_characters_used": [],
+    "relationships_used": [],
+    "ending_type_target": "",
+    "custom_arc_overview_details": ""
+  },
+  "kishotenketsu_outline": {
+    "is_enabled": false,
+    "note_to_user": "Use if the selected narrative structure is Kishotenketsu or Hybrid.",
+    "ki_introduction": {
+      "purpose": "Introduce character, world, tone, rules, and normal life.",
+      "world_elements_introduced": [],
+      "characters_introduced": [],
+      "relationships_introduced": [],
+      "initial_mystery_or_question": "",
+      "opening_image": "",
+      "chapter_range": ""
+    },
+    "sho_development": {
+      "purpose": "Develop the setup, expand character relationships, show daily pressure, and deepen the world.",
+      "character_growth_beats": [],
+      "relationship_development_beats": [],
+      "faction_pressure_beats": [],
+      "power_or_rule_reveal_beats": [],
+      "tension_growth": "",
+      "chapter_range": ""
+    },
+    "ten_twist_or_turn": {
+      "purpose": "Introduce the big turn, contrast, reveal, reversal, betrayal, new truth, or tonal shift.",
+      "main_twist": "",
+      "hidden_truth_revealed": "",
+      "major_threat_recontextualized": "",
+      "relationship_reversal": "",
+      "character_arc_turning_point": "",
+      "chapter_range": ""
+    },
+    "ketsu_conclusion": {
+      "purpose": "Resolve the consequences of the turn and show the new meaning of the story.",
+      "conflict_resolution": "",
+      "emotional_resolution": "",
+      "relationship_resolution": "",
+      "world_state_after_arc": "",
+      "character_final_state": "",
+      "chapter_range": ""
+    }
+  },
+  "conflict_driven_outline": {
+    "is_enabled": false,
+    "note_to_user": "Use for Three-Act, Hero's Journey, Shonen, War, Mystery, Horror, Revenge, and other conflict-heavy arcs.",
+    "act_1_setup": {
+      "opening_hook": "",
+      "normal_world": "",
+      "inciting_incident": "",
+      "first_major_choice": "",
+      "main_goal_locked": "",
+      "chapter_range": ""
+    },
+    "act_2_escalation": {
+      "early_obstacles": [],
+      "training_or_learning_beats": [],
+      "relationship_frictions": [],
+      "minor_threat_events": [],
+      "midpoint_reveal_or_defeat": "",
+      "stakes_increase": "",
+      "chapter_range": ""
+    },
+    "act_3_climax_resolution": {
+      "darkest_moment": "",
+      "final_plan_or_breakthrough": "",
+      "climax_battle_or_confrontation": "",
+      "major_threat_outcome": "",
+      "character_arc_payoff": "",
+      "relationship_payoff": "",
+      "ending_image": "",
+      "chapter_range": ""
+    }
+  },
+  "chapter_or_episode_list": {
+    "note_to_user": "Each chapter/episode can be generated after the main arc outline is approved.",
+    "chapters": [
+      {
+        "chapter_id": "ch_001",
+        "chapter_number": 1,
+        "arc_title": "",
+        "chapter_title": "",
+        "chapter_purpose": "",
+        "structure_section": "",
+        "summary": "",
+        "characters_present": [],
+        "relationships_used": [],
+        "factions_used": [],
+        "threats_used": [],
+        "world_rules_shown": [],
+        "power_system_shown": [],
+        "main_conflict": "",
+        "emotional_beat": "",
+        "twist_or_hook": "",
+        "ending_cliffhanger": "",
+        "custom_chapter_details": ""
+      }
+    ]
+  },
+  "scene_cards": {
+    "note_to_user": "Optional deeper breakdown after chapters exist.",
+    "scenes": [
+      {
+        "scene_id": "scene_001",
+        "chapter_id": "ch_001",
+        "scene_order": 1,
+        "location": "",
+        "time": "",
+        "characters_present": [],
+        "scene_goal": "",
+        "scene_conflict": "",
+        "relationship_dynamic_used": "",
+        "new_information_revealed": "",
+        "action_or_dialogue_focus": "",
+        "visual_manga_moment": "",
+        "panel_mood": "",
+        "ending_beat": "",
+        "custom_scene_details": ""
+      }
+    ]
+  },
+  "plot_threads": {
+    "main_plot_thread": {
+      "goal": "",
+      "obstacles": [],
+      "turning_points": [],
+      "resolution": ""
+    },
+    "character_arc_threads": [
+      {
+        "character_id": "",
+        "starting_state": "",
+        "growth_beats": [],
+        "lowest_point": "",
+        "final_state": ""
+      }
+    ],
+    "relationship_threads": [
+      {
+        "relationship_id": "",
+        "start_dynamic": "",
+        "change_beats": [],
+        "breaking_point": "",
+        "final_dynamic": ""
+      }
+    ],
+    "threat_threads": [
+      {
+        "threat_id_or_name": "",
+        "first_hint": "",
+        "escalation_beats": [],
+        "reveal": "",
+        "final_outcome": ""
+      }
+    ],
+    "power_threads": [
+      {
+        "character_id": "",
+        "power_name": "",
+        "first_use": "",
+        "training_or_failure_beats": [],
+        "breakthrough": "",
+        "cost_or_consequence": ""
+      }
+    ]
+  },
+  "continuity_checks": {
+    "checks": [
+      "Does the plot obey master_story.json world rules?",
+      "Does the main threat appear early enough or get foreshadowed?",
+      "Does every major character have a role in the plot?",
+      "Does every important relationship affect at least one scene?",
+      "Does the ending direction match master_story.json?",
+      "Do powers obey the limits from world_master_rules?",
+      "Do factions act according to their goals and conflict map?"
+    ],
+    "issues_found": [],
+    "fix_notes": ""
+  },
+  "story_integrity_lock": {
+    "locked": false,
+    "lock_reason": null,
+    "locked_at": null,
+    "deleted_chapter_id": null,
+    "deleted_chapter_number": null,
+    "deleted_chapter_title": null,
+    "chapters_to_restore": [],
+    "chapters_restored": []
+  },
+  "custom_plot_outline_details": ""
+}

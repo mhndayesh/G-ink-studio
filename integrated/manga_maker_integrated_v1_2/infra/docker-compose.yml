@@ -1,0 +1,33 @@
+services:
+  neo4j:
+    image: neo4j:5
+    container_name: manga-neo4j
+    ports:
+      - "7474:7474"   # Browser UI (HTTP)
+      - "7687:7687"   # Bolt protocol (Python driver)
+    environment:
+      NEO4J_AUTH: neo4j/manga_maker_password
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "neo4j-admin dbms health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: manga-qdrant
+    ports:
+      - "6333:6333"   # HTTP API + gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  neo4j_data:
+  qdrant_data:

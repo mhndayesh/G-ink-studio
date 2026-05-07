@@ -1,0 +1,230 @@
+{
+  "story_id": "story_001",
+  "version_id": "v001",
+  "file_type": "chapter_script",
+  "state_type": "template_state",
+  "script_id": "script_ch_001",
+  "linked_files": {
+    "master_story_file": "master_story.json",
+    "characters_file": "characters.json",
+    "plot_outline_file": "plot_outline.json",
+    "plot_workspace_file": "plot_workspace.json",
+    "memory_system_file": "memory_system.json"
+  },
+  "chapter_metadata": {
+    "arc_id": "arc_001",
+    "chapter_id": "ch_001",
+    "chapter_number": 1,
+    "chapter_title": "",
+    "chapter_status": "draft",
+    "created_from_workspace_id": "workspace_001",
+    "created_from_plot_outline_chapter_id": "ch_001",
+    "script_version": "draft_001",
+    "approved_as_official": false
+  },
+  "chapter_purpose": {
+    "summary": "",
+    "chapter_goal": "",
+    "reader_question": "",
+    "opening_hook": "",
+    "ending_hook": "",
+    "main_emotional_beat": "",
+    "main_conflict": "",
+    "main_relationship_dynamic": "",
+    "main_world_rule_shown": "",
+    "main_power_or_ability_shown": "",
+    "threat_hint_or_reveal": "",
+    "custom_chapter_purpose_details": ""
+  },
+  "linked_story_context": {
+    "characters_present": [],
+    "relationships_used": [],
+    "factions_used": [],
+    "locations_used": [],
+    "world_rules_used": [],
+    "powers_used": [],
+    "major_threats_used": [],
+    "minor_threats_used": [],
+    "plot_threads_used": [],
+    "foreshadowing_used": []
+  },
+  "script_format": {
+    "format_type": "manga_script",
+    "structure": "chapter -> scenes -> pages -> panels",
+    "visual_first_rule": "Each panel should describe the visual before dialogue when possible.",
+    "dialogue_rule": "Dialogue should stay short enough for manga panels unless intentionally dramatic.",
+    "panel_rule": "Each panel should have one main visual idea."
+  },
+  "chapter_scene_breakdown": [
+    {
+      "scene_id": "scene_001",
+      "scene_order": 1,
+      "scene_title": "",
+      "scene_purpose": "",
+      "location": "",
+      "time": "",
+      "characters_present": [],
+      "relationship_dynamic_used": "",
+      "scene_goal": "",
+      "scene_conflict": "",
+      "emotional_tone": "",
+      "new_information_revealed": "",
+      "visual_manga_moment": "",
+      "ending_beat": "",
+      "linked_plot_outline_scene_id": "scene_001"
+    }
+  ],
+  "pages": [
+    {
+      "page_id": "page_001",
+      "page_number": 1,
+      "scene_id": "scene_001",
+      "page_purpose": "",
+      "page_mood": "",
+      "panels": [
+        {
+          "panel_id": "panel_001",
+          "panel_number": 1,
+          "panel_size": {
+            "selected": "",
+            "options": [
+              "Small",
+              "Medium",
+              "Large",
+              "Full-Width",
+              "Splash Panel",
+              "Double-Page Spread",
+              "Custom"
+            ],
+            "custom_panel_size": ""
+          },
+          "camera_shot": {
+            "selected": "",
+            "options": [
+              "Close-Up",
+              "Extreme Close-Up",
+              "Medium Shot",
+              "Wide Shot",
+              "Over-The-Shoulder",
+              "Low Angle",
+              "High Angle",
+              "Bird's-Eye View",
+              "Worm's-Eye View",
+              "Action Shot",
+              "Reaction Shot",
+              "Establishing Shot",
+              "Custom"
+            ],
+            "custom_camera_shot": ""
+          },
+          "visual": "",
+          "character_action": "",
+          "background_details": "",
+          "facial_expression": "",
+          "pose_or_body_language": "",
+          "dialogue": [
+            {
+              "speaker_id": "",
+              "speaker_name": "",
+              "text": "",
+              "speech_bubble_type": {
+                "selected": "",
+                "options": [
+                  "Normal",
+                  "Shout",
+                  "Whisper",
+                  "Thought",
+                  "Narration",
+                  "Off-Screen",
+                  "Monster / Distorted",
+                  "Custom"
+                ],
+                "custom_bubble_type": ""
+              }
+            }
+          ],
+          "narration": "",
+          "sound_effects": [
+            {
+              "sfx_text": "",
+              "sfx_meaning": "",
+              "sfx_style_note": ""
+            }
+          ],
+          "mood": "",
+          "pacing": {
+            "selected": "",
+            "options": [
+              "Fast",
+              "Normal",
+              "Slow",
+              "Dramatic Pause",
+              "Comedic Timing",
+              "Action Burst",
+              "Custom"
+            ],
+            "custom_pacing": ""
+          },
+          "continuity_notes": "",
+          "custom_panel_details": ""
+        }
+      ]
+    }
+  ],
+  "chapter_dialogue_index": [
+    {
+      "speaker_id": "",
+      "speaker_name": "",
+      "line_count": 0,
+      "important_lines": []
+    }
+  ],
+  "chapter_visual_index": {
+    "important_visual_moments": [],
+    "new_character_design_notes": [],
+    "new_location_design_notes": [],
+    "power_visuals_used": [],
+    "symbolism_or_motifs_used": []
+  },
+  "chapter_event_extraction": {
+    "status": "not_started",
+    "detected_events_from_script": [],
+    "events_confirmed_by_user": [],
+    "events_rejected_by_user": [],
+    "events_to_save_after_approval": []
+  },
+  "memory_update_plan_after_chapter": {
+    "requires_memory_update": true,
+    "update_master_story_if_needed": true,
+    "update_characters_if_needed": true,
+    "update_plot_outline_if_needed": true,
+    "update_relationship_map_if_needed": true,
+    "update_postgresql": true,
+    "update_knowledge_graph": true,
+    "update_vector_database": true,
+    "run_continuity_report": true,
+    "create_next_version_bundle": true,
+    "next_version_id": ""
+  },
+  "continuity_checks": {
+    "status": "not_started",
+    "checks": [
+      "Dead characters do not appear alive unless flashback/revival is marked.",
+      "Destroyed locations are not used as normal.",
+      "Lost powers are not used without recovery event.",
+      "Relationships match characters.json relationship map.",
+      "Factions act according to current master_story.json faction state.",
+      "World rules are not broken unless a WORLD_RULE_CHANGED event is created.",
+      "Chapter events update plot_outline.json if they affect future plot."
+    ],
+    "issues_found": [],
+    "fix_notes": ""
+  },
+  "approval": {
+    "script_approved_by_user": false,
+    "approved_at": "",
+    "approval_notes": "",
+    "ready_for_memory_update": false
+  },
+  "custom_chapter_script_details": ""
+}

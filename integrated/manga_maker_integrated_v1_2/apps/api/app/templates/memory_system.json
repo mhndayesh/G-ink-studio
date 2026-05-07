@@ -1,0 +1,390 @@
+{
+  "story_id": "story_001",
+  "version_id": "v001",
+  "file_type": "memory_system",
+  "state_type": "template_state",
+  "story_title": "Manga Maker System",
+  "memory_architecture": {
+    "mode": "hybrid_full_from_start",
+    "official_truth_order": [
+      "event_store",
+      "versioned_json_snapshots",
+      "postgresql_registry",
+      "knowledge_graph",
+      "vector_memory",
+      "llm_interpreter"
+    ],
+    "core_rule": "The LLM never directly overwrites official memory. It proposes patches that become official only after validation and approval.",
+    "memory_layers": {
+      "event_store": "Historical truth. Stores every official story change as an immutable event.",
+      "versioned_json_snapshots": "Readable story bible state for each official version.",
+      "postgresql_registry": "System control layer for stories, arcs, chapters, versions, approvals, file paths, events, and sync jobs.",
+      "knowledge_graph": "Structured memory for relationships, causality, factions, locations, powers, threats, and timeline links.",
+      "vector_memory": "Semantic memory for prose, scenes, lore, emotional context, dialogue, foreshadowing, and summaries.",
+      "llm_interpreter": "Reads context, proposes events/patches, explains changes, and helps generate story content."
+    }
+  },
+  "versioning": {
+    "version_mode": "arc_or_chapter_based",
+    "current_version_id": "v001",
+    "version_pattern": "v001, v002, v003",
+    "all_main_jsons_version_together": true,
+    "versioned_files": [
+      "master_story.json",
+      "characters.json",
+      "plot_outline.json"
+    ],
+    "snapshot_bundle_rule": "Every official version contains synchronized copies of all main JSON files.",
+    "old_version_rule": "Old versions never change. v001 stays frozen. New story changes create v002, v003, and so on.",
+    "no_mixed_versions_rule": "Never combine master_story from one version with characters or plot_outline from another version unless explicitly doing comparison/reconstruction.",
+    "master_story_mutability": {
+      "can_change_over_time": true,
+      "rule": "master_story.json is allowed to change when official story events create a hard turn that affects the world, rules, factions, threats, locations, dimensions, portals, resources, ending direction, story foundation, or major hidden truths.",
+      "fixed_rule": "master_story_v001.json never gets edited. A hard turn creates master_story_v002.json, master_story_v003.json, etc.",
+      "requires_event": true,
+      "requires_validation": true,
+      "requires_version_bundle_update": true,
+      "updates_all_main_jsons_together": true,
+      "can_update_branches": [
+        "idea_so_far",
+        "ending_direction",
+        "story_foundation",
+        "world_type",
+        "world_master_rules",
+        "major_factions_and_ruling_sides",
+        "major_threats_and_minor_side_threats"
+      ],
+      "allowed_change_sources": [
+        "WORLD_RULE_CHANGED",
+        "LOCATION_CREATED",
+        "LOCATION_DESTROYED",
+        "LOCATION_CONQUERED",
+        "LOCATION_CORRUPTED",
+        "PORTAL_OPENED",
+        "PORTAL_CLOSED",
+        "DIMENSION_CHANGED",
+        "RESOURCE_COLLAPSED",
+        "FACTION_CREATED",
+        "FACTION_DESTROYED",
+        "FACTION_SPLIT",
+        "FACTION_MERGED",
+        "FACTION_LEADER_CHANGED",
+        "FACTION_GOAL_CHANGED",
+        "FACTION_WAR_STARTED",
+        "FACTION_WAR_ENDED",
+        "THREAT_LEVEL_CHANGED",
+        "THREAT_REVEALED",
+        "THREAT_DEFEATED",
+        "THREAT_ESCAPED",
+        "THREAT_EVOLVED",
+        "HIDDEN_TRUTH_REVEALED",
+        "ENDING_DIRECTION_CHANGED",
+        "STORY_FOUNDATION_SHIFTED"
+      ]
+    },
+    "official_file_names": {
+      "master_story": "master_story.json",
+      "characters": "characters.json",
+      "plot_outline": "plot_outline.json",
+      "memory_system": "memory_system.json",
+      "plot_workspace": "plot_workspace.json",
+      "chapter_script": "chapter_script.json"
+    },
+    "working_files": {
+      "plot_workspace.json": "Temporary working file for free writing, AI expansion, consequence detection, questions, and proposed patches.",
+      "chapter_script.json": "Clean manga chapter script output created from approved plot workspace/chapter plan."
+    },
+    "filename_rule": "Use exact official names in all file links. All plot references must point to plot_outline.json."
+  },
+  "storage_layers": {
+    "postgresql": {
+      "purpose": "Registry, metadata, transactions, approvals, version tracking, snapshot paths, event references, sync jobs, and continuity reports.",
+      "tables": [
+        "stories",
+        "arcs",
+        "chapters",
+        "story_versions",
+        "story_files",
+        "story_events",
+        "event_dependencies",
+        "event_projections",
+        "generation_runs",
+        "approval_queue",
+        "sync_jobs",
+        "continuity_reports"
+      ]
+    },
+    "event_store": {
+      "purpose": "Append-only historical truth of every official story change.",
+      "immutable": true,
+      "replayable": true,
+      "event_categories": [
+        "character_events",
+        "relationship_events",
+        "world_events",
+        "faction_events",
+        "threat_events",
+        "plot_events",
+        "power_events"
+      ],
+      "hard_rule": "No official JSON update happens without an event."
+    },
+    "json_snapshots": {
+      "purpose": "Readable story bible state for each version.",
+      "snapshot_files": [
+        "master_story.json",
+        "characters.json",
+        "plot_outline.json"
+      ],
+      "storage": "object_storage_or_git_style_folder",
+      "keeps_previous_versions": true,
+      "folder_pattern": "/stories/{story_id}/versions/{version_id}/",
+      "main_snapshot_files": [
+        "master_story.json",
+        "characters.json",
+        "plot_outline.json"
+      ],
+      "workflow_files": [
+        "plot_workspace.json",
+        "chapter_script.json"
+      ]
+    },
+    "knowledge_graph": {
+      "purpose": "Structured relationship, causality, entity, faction, threat, location, power, and timeline memory.",
+      "recommended_db": "Neo4j or Memgraph",
+      "node_types": [
+        "Story",
+        "Version",
+        "JsonFile",
+        "Arc",
+        "Chapter",
+        "Scene",
+        "Character",
+        "CharacterProfile",
+        "Relationship",
+        "Faction",
+        "Location",
+        "Threat",
+        "Power",
+        "WorldRule",
+        "Event",
+        "Secret",
+        "Object",
+        "Prophecy"
+      ],
+      "edge_types": [
+        "HAS_VERSION",
+        "CONTAINS_FILE",
+        "HAS_CHAPTER",
+        "HAS_SCENE",
+        "CONTAINS_EVENT",
+        "AFFECTS",
+        "MEMBER_OF",
+        "HAS_POWER",
+        "HAS_RELATIONSHIP",
+        "CONNECTS",
+        "DIED_IN",
+        "BETRAYED",
+        "DESTROYED",
+        "CAUSED",
+        "OPPOSES",
+        "TARGETS",
+        "CHANGED_IN",
+        "CREATED_BY",
+        "REVEALED_IN"
+      ]
+    },
+    "vector_database": {
+      "purpose": "Semantic memory for lore, prose, scenes, emotional context, foreshadowing, summaries, and dialogue.",
+      "recommended_db": "Qdrant or Weaviate",
+      "collections": [
+        "story_lore_chunks",
+        "chapter_summary_chunks",
+        "scene_chunks",
+        "character_memory_chunks",
+        "relationship_memory_chunks",
+        "world_rule_chunks",
+        "foreshadowing_chunks",
+        "dialogue_chunks",
+        "plot_thread_chunks"
+      ],
+      "metadata_required": [
+        "story_id",
+        "version_id",
+        "arc_id",
+        "chapter_id",
+        "scene_id",
+        "entity_ids",
+        "source_file",
+        "chunk_type"
+      ],
+      "retrieval_rule": "Always filter by story_id and allowed version range before semantic search to avoid future-version memory leaks."
+    }
+  },
+  "event_types": {
+    "character_events": [
+      "CHARACTER_CREATED",
+      "CHARACTER_UPDATED",
+      "CHARACTER_DIED",
+      "CHARACTER_REVIVED",
+      "CHARACTER_STATUS_CHANGED",
+      "CHARACTER_ALLEGIANCE_CHANGED",
+      "CHARACTER_SECRET_REVEALED",
+      "CHARACTER_ARC_PROGRESS",
+      "CHARACTER_INJURED",
+      "CHARACTER_HEALED",
+      "CHARACTER_REPUTATION_CHANGED"
+    ],
+    "relationship_events": [
+      "RELATIONSHIP_CREATED",
+      "RELATIONSHIP_CHANGED",
+      "RELATIONSHIP_BROKEN",
+      "RELATIONSHIP_REPAIRED",
+      "RELATIONSHIP_SECRET_REVEALED",
+      "RELATIONSHIP_BETRAYAL",
+      "RELATIONSHIP_ROMANCE_STARTED",
+      "RELATIONSHIP_RIVALRY_ESCALATED",
+      "CHARACTER_ATTACKED_CHARACTER",
+      "RELATIONSHIP_TRUST_CHANGED"
+    ],
+    "power_events": [
+      "CHARACTER_POWER_AWAKENED",
+      "CHARACTER_POWER_LOST",
+      "CHARACTER_POWER_EVOLVED",
+      "POWER_LIMIT_CHANGED",
+      "POWER_SYSTEM_CHANGED",
+      "FORBIDDEN_POWER_USED"
+    ],
+    "world_events": [
+      "WORLD_RULE_CHANGED",
+      "LOCATION_CREATED",
+      "LOCATION_DESTROYED",
+      "LOCATION_CONQUERED",
+      "LOCATION_CORRUPTED",
+      "PORTAL_OPENED",
+      "PORTAL_CLOSED",
+      "DIMENSION_CHANGED",
+      "RESOURCE_COLLAPSED",
+      "STORY_FOUNDATION_SHIFTED"
+    ],
+    "faction_events": [
+      "FACTION_CREATED",
+      "FACTION_DESTROYED",
+      "FACTION_SPLIT",
+      "FACTION_MERGED",
+      "FACTION_LEADER_CHANGED",
+      "FACTION_GOAL_CHANGED",
+      "FACTION_WAR_STARTED",
+      "FACTION_WAR_ENDED"
+    ],
+    "threat_events": [
+      "THREAT_INTRODUCED",
+      "THREAT_LEVEL_CHANGED",
+      "THREAT_REVEALED",
+      "THREAT_DEFEATED",
+      "THREAT_ESCAPED",
+      "THREAT_EVOLVED",
+      "HIDDEN_TRUTH_REVEALED"
+    ],
+    "plot_events": [
+      "PLOT_ARC_STARTED",
+      "PLOT_ARC_COMPLETED",
+      "CHAPTER_COMPLETED",
+      "SCENE_COMPLETED",
+      "FORESHADOWING_ADDED",
+      "FORESHADOWING_PAID_OFF",
+      "TWIST_REVEALED",
+      "ENDING_LOCKED",
+      "ENDING_DIRECTION_CHANGED",
+      "USER_FREE_PLOT_INPUT_CREATED",
+      "PLOT_INPUT_EXPANDED_BY_LLM",
+      "PLOT_INPUT_REVIEWED",
+      "PLOT_CHANGES_CONFIRMED"
+    ]
+  },
+  "sync_pipeline": {
+    "official_update_steps": [
+      "draft_chapter_or_arc",
+      "extract_story_events",
+      "validate_events",
+      "generate_json_patches",
+      "preview_patches",
+      "approve_patches",
+      "save_events",
+      "create_next_json_snapshots",
+      "update_postgresql_registry",
+      "update_knowledge_graph",
+      "update_vector_database",
+      "run_continuity_report",
+      "mark_version_official"
+    ],
+    "projection_targets": [
+      "json_snapshots",
+      "postgresql",
+      "knowledge_graph",
+      "vector_database",
+      "continuity_report"
+    ]
+  },
+  "retrieval_pipeline": {
+    "steps": [
+      "get_current_version_from_postgresql",
+      "load_current_json_snapshots",
+      "query_knowledge_graph_for_exact_relationships",
+      "query_vector_database_for_semantic_memory",
+      "combine_context_pack_for_llm"
+    ],
+    "rules": [
+      "Use PostgreSQL first to find the official current version.",
+      "Use JSON snapshots for current story bible truth.",
+      "Use knowledge graph for exact relationships and causality.",
+      "Use vector DB for fuzzy/semantic story memory.",
+      "Do not retrieve memories from future versions unless the user asks for comparison."
+    ]
+  },
+  "continuity_checks": [
+    "dead_character_used_without_flashback_or_revive_event",
+    "destroyed_location_used_as_normal",
+    "lost_power_used_without_power_return_event",
+    "relationship_state_contradiction",
+    "faction_goal_contradiction",
+    "world_rule_violation",
+    "major_threat_disappears_without_resolution",
+    "plot_outline_not_updated_after_major_event",
+    "master_story_change_without_event",
+    "master_story_hard_turn_without_version_bundle_update",
+    "future_version_memory_leaks_into_previous_version",
+    "mixed_version_files_used_together",
+    "graph_projection_missing_after_event",
+    "vector_memory_missing_after_major_scene",
+    "relationship_map_enabled_before_two_real_profiles",
+    "non_official_filename_reference_used"
+  ],
+  "snapshot_folder_structure": {
+    "pattern": "/stories/{story_id}/versions/{version_id}/",
+    "version_manifest_shape": {
+      "story_id": "",
+      "version_id": "",
+      "previous_version_id": "",
+      "arc_id": "",
+      "chapter_id": "",
+      "files": {
+        "master_story": "master_story.json",
+        "characters": "characters.json",
+        "plot_outline": "plot_outline.json"
+      },
+      "created_from_events": [],
+      "created_at": ""
+    }
+  },
+  "recommended_stack": {
+    "backend": "FastAPI",
+    "main_database": "PostgreSQL",
+    "graph_database": "Neo4j",
+    "vector_database": "Qdrant",
+    "cache": "Redis",
+    "snapshot_storage": "S3-compatible storage or local Git-style object storage",
+    "validation": "Pydantic JSON schemas",
+    "llm_layer": "LLM patch and event extraction pipeline"
+  }
+}

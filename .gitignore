@@ -1,0 +1,72 @@
+# Story templates are canonical at integrated/.../apps/api/app/templates/.
+# Per-story user data lives under integrated/.../apps/api/storage/stories/
+# and the SQLite registry sits next to it. Both are local working state, not
+# source — ignore them everywhere.
+storage/stories/
+storage/*.sqlite
+storage/*.sqlite-journal
+**/storage/stories/
+**/storage/*.sqlite
+**/storage/*.sqlite-journal
+**/storage/*.db
+
+# === LOCAL TOOL STATE / SCRATCH FILES ===
+.claude/settings.local.json
+.playwright-mcp/
+/NUL
+/export
+/export(*)
+
+# === BACKUP / ARCHIVE ZIPs (leave as-is, do not extract into git) ===
+*.zip
+
+# === TEST REPORTS ===
+*_test_report.json
+frontend_smoke_output.txt
+integration_report.json
+correction_manifest.json
+graph_vector_integration_report.json
+manga_maker_frontend_flow_v0_1_smoke.json
+real_story_e2e_report.json
+story_*-e2e.png
+app-home-clean.png
+story003-home.png
+studio-hub.png
+audit-*.md
+
+# === NODE.JS / FRONTEND (Next.js) ===
+node_modules/
+.next/
+out/
+dist/
+build/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# === PYTHON / BACKEND ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+*.pyc
+*.tsbuildinfo
+
+# === ENVIRONMENT / SECRETS ===
+.env
+.env.local
+.env.*.local
+
+# === IDE / EDITOR ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === OS FILES ===
+*.log

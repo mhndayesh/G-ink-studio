@@ -1,0 +1,1490 @@
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+import httpx
+
+from app.core.config import Settings
+from uuid import uuid4
+from app.repositories.sqlite_registry import SQLiteRegistry
+
+logger = logging.getLogger("manga.llm")
+
+
+# Stable relationship ID derived from "A / B" so plot_threads.relationship_threads
+# can reference an entry without the LLM needing to invent IDs.
+def _slugify_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_")
+
+
+def _stable_rel_id_from_pair(pair: str) -> str:
+    parts = [p.strip() for p in (pair or "").split("/") if p.strip()]
+    if len(parts) < 2:
+        return ""
+    return f"rel_{_slugify_name(parts[0])}__{_slugify_name(parts[1])}"
+
+
+@dataclass
+class LLMResult:
+    provider: str
+    model: str
+    used_fallback: bool
+    output: dict[str, Any]
+    warnings: list[str]
+    run_id: str | None = None
+
+
+class LLMService:
+    """Real LLM integration with deterministic fallback.
+
+    This service is intentionally safe for local development:
+    - If no API key is configured, it returns deterministic fallback output.
+    - If the provider call fails or returns invalid JSON, it returns fallback output.
+    - Every call is logged in the dev registry so the workflow is auditable.
+    """
+
+    def __init__(self, *, settings: Settings, registry: SQLiteRegistry):
+        self.settings = settings
+        self.registry = registry
+
+    def status(self) -> dict[str, Any]:
+        api_key_present = bool(self.settings.openai_api_key and self.settings.openai_api_key.get_secret_value())
+        ready = self.settings.llm_enabled and self.settings.llm_provider == "openai" and api_key_present
+        logger.info(
+            "[LLM STATUS] enabled=%s provider=%s model=%s api_key_present=%s base_url=%s real_llm_ready=%s",
+            self.settings.llm_enabled, self.settings.llm_provider, self.settings.openai_model,
+            api_key_present, self.settings.openai_base_url, ready,
+        )
+        return {
+            "llm_enabled": self.settings.llm_enabled,
+            "provider": self.settings.llm_provider,
+            "model": self.settings.openai_model,
+            "api_key_present": api_key_present,
+            "real_llm_ready": ready,
+            "fallback_mode_available": True,
+            "prompt_version": self.settings.llm_prompt_version,
+        }
+
+    def extract_script_events(
+        self,
+        *,
+        story_id: str,
+        chapter_id: str,
+        script_text: str,
+        context: dict[str, Any],
+    ) -> LLMResult:
+        """Extract official-event candidates from a generated chapter script.
+
+        Returns detected_events_from_script — each item shaped like the manual
+        keyword extractor's output so ChapterScriptService can swap it in.
+        """
+        fallback: dict[str, Any] = {
+            "detected_events_from_script": [],
+            "warnings": ["Real LLM was not used. Returned empty event list."],
+        }
+        input_payload = {
+            "task": "extract_script_events",
+            "chapter_id": chapter_id,
+            "script_text": script_text[:4000],
+            "characters": context.get("characters", [])[:12],
+            "current_threads_summary": context.get("plot_threads_summary", {}),
+        }
+        system = (
+            "You are the Manga Maker chapter-script event extractor. "
+            "Read the chapter script (panel descriptions, dialogue, narration) and detect "
+            "consequential story events: injuries, deaths, allegiance changes, attacks, "
+            "power awakenings/losses, location destruction, faction shifts, threat reveals. "
+            "RETURN JSON ONLY with key 'detected_events_from_script' — an array. "
+            "Each item: { event_type (UPPER_SNAKE_CASE like CHARACTER_INJURED), "
+            "confidence ('high'|'medium'|'low'), evidence (short quote/paraphrase from the script), "
+            "target_entity_name (optional character/faction/location name) }. "
+            "Use only event types that map to story memory; skip cosmetic beats. "
+            "Return an empty array if no consequential events are found."
+        )
+        user = json.dumps(input_payload, ensure_ascii=False)
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=f"script_extract_{chapter_id}",
+            run_type="script_event_extraction",
+            input_payload=input_payload,
+            system_prompt=system,
+            user_prompt=user,
+            fallback=fallback,
+        )
+        out = result.output
+        out.setdefault("detected_events_from_script", [])
+        out.setdefault("warnings", [])
+        result.output = out
+        return result
+
+    def generate_manga_script_panels(
+        self,
+        *,
+        story_id: str,
+        chapter: dict[str, Any],
+        scenes: list[dict[str, Any]],
+        final_text: str,
+        plot_threads: dict[str, Any],
+        characters_context: list[dict[str, Any]],
+    ) -> LLMResult:
+        """Generate AI-enhanced panel details for every page of a manga chapter.
+
+        Returns pages_enhanced — a list indexed by page_index, each containing
+        panels indexed by panel_index with visual/dialogue/action content.
+        The ChapterScriptService merges these back into the structural skeleton.
+        """
+        fallback: dict[str, Any] = {
+            "pages_enhanced": [],
+            "warnings": ["Real LLM was not used. Panel descriptions remain as structural placeholders."],
+        }
+
+        # Compact scene summaries to keep prompt size reasonable.
+        compact_scenes = [
+            {
+                "scene_index": i,
+                "scene_id": s.get("scene_id", ""),
+                "location": s.get("location", ""),
+                "time": s.get("time", ""),
+                "characters_present": s.get("characters_present", []),
+                "scene_goal": s.get("scene_goal", ""),
+                "scene_conflict": s.get("scene_conflict", ""),
+                "visual_manga_moment": s.get("visual_manga_moment", ""),
+                "panel_mood": s.get("panel_mood", ""),
+                "new_information_revealed": s.get("new_information_revealed", ""),
+                "ending_beat": s.get("ending_beat", ""),
+                "relationship_dynamic_used": s.get("relationship_dynamic_used", ""),
+            }
+            for i, s in enumerate(scenes[:8])
+        ]
+        main_thread = plot_threads.get("main_plot_thread", {})
+        compact_threads = {
+            "main_goal": str(main_thread.get("goal", ""))[:160],
+            "character_arcs": [
+                {"id": a.get("character_id", ""), "state": str(a.get("starting_state", ""))[:80]}
+                for a in plot_threads.get("character_arc_threads", [])[:4]
+                if isinstance(a, dict)
+            ],
+            "threat_threads": [
+                {"name": t.get("threat_id_or_name", ""), "hint": str(t.get("first_hint", ""))[:80]}
+                for t in plot_threads.get("threat_threads", [])[:3]
+                if isinstance(t, dict)
+            ],
+        }
+
+        input_payload = {
+            "task": "manga_script_panel_generation",
+            "chapter": {
+                "chapter_id": chapter.get("chapter_id", ""),
+                "chapter_title": chapter.get("chapter_title", ""),
+                "chapter_purpose": chapter.get("chapter_purpose", ""),
+                "summary": str(chapter.get("summary", ""))[:400],
+                "main_conflict": str(chapter.get("main_conflict", ""))[:300],
+                "emotional_beat": str(chapter.get("emotional_beat", ""))[:200],
+                "ending_cliffhanger": str(chapter.get("ending_cliffhanger", ""))[:200],
+            },
+            "scenes": compact_scenes,
+            "workspace_text": final_text[:800],
+            "plot_threads": compact_threads,
+            "characters": characters_context[:8],
+        }
+        system = (
+            "You are the Manga Maker panel script generator. "
+            "Given a chapter's scene cards, generate creative and detailed manga panel content for each page. "
+            "RETURN JSON ONLY with top-level key 'pages_enhanced' — an array. "
+            "Each element: { page_index (int, 0-based matching scene index), page_mood (string), "
+            "panels (array of { panel_index (int, 0-based, up to 4), "
+            "visual (what is drawn — 1-2 sentences, manga-panel style, visual-first), "
+            "character_action (what the character physically does), "
+            "background_details (environment details), "
+            "facial_expression (emotion shown on face), "
+            "pose_or_body_language (body posture), "
+            "dialogue (array of { speaker_name, text (short, manga-panel length), speech_bubble_type (Normal/Shout/Whisper/Thought/Narration/Off-Screen) }), "
+            "narration (short caption box text, optional), "
+            "sound_effects (array of { sfx_text, sfx_meaning }), "
+            "mood (scene mood string), "
+            "pacing (one of: Fast/Normal/Slow/Dramatic Pause/Action Burst) } ) }. "
+            "Generate panels for panel_index 0-4 (5 panels per page). "
+            "Panel 0: wide establishing shot. Panel 1: character introduction/context. "
+            "Panel 2: core conflict/action. Panel 3: reaction/revelation. Panel 4: ending hook/cliffhanger. "
+            "Keep dialogue short (under 20 words per bubble). "
+            "Use the scene's visual_manga_moment, conflict, and ending_beat to drive panel content. "
+            "Do not generate violent, explicit, or harmful content. Keep output general-audience manga."
+        )
+        user = json.dumps(input_payload, ensure_ascii=False)
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=f"script_panels_{chapter.get('chapter_id', 'unknown')}",
+            run_type="manga_script_panels",
+            input_payload=input_payload,
+            system_prompt=system,
+            user_prompt=user,
+            fallback=fallback,
+        )
+        out = result.output
+        out.setdefault("pages_enhanced", [])
+        out.setdefault("warnings", [])
+        result.output = out
+        return result
+
+    def expand_writing(
+        self,
+        *,
+        story_id: str,
+        workspace_id: str,
+        user_text: str,
+        expansion_mode: str,
+        context: dict[str, Any],
+        fallback_text: str,
+    ) -> LLMResult:
+        fallback = {
+            "expanded_text": fallback_text,
+            "preserved_intent_summary": "Deterministic fallback preserved the user's stated events.",
+            "added_details": ["fallback expansion"],
+            "warnings": ["Real LLM was not used."],
+        }
+        input_payload = {
+            "task": "ai_completion_expand_writing",
+            "user_text": user_text,
+            "expansion_mode": expansion_mode,
+            "context": context,
+        }
+        system = (
+            "You are the Manga Maker System LLM layer. Expand the user's manga plot writing while preserving intent. "
+            "Return JSON only with keys: expanded_text, preserved_intent_summary, added_details, warnings. "
+            "Do not create official events. Do not overwrite memory. "
+            "Do not generate violent, explicit, or harmful content. Keep output appropriate for a general audience manga."
+        )
+        user = json.dumps(input_payload, ensure_ascii=False)
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=workspace_id,
+            run_type="ai_completion",
+            input_payload=input_payload,
+            system_prompt=system,
+            user_prompt=user,
+            fallback=fallback,
+        )
+        # Defensive shape repair.
+        out = result.output
+        out.setdefault("expanded_text", fallback_text)
+        out.setdefault("preserved_intent_summary", "")
+        out.setdefault("added_details", [])
+        out.setdefault("warnings", [])
+        result.output = out
+        return result
+
+    def extract_consequences(
+        self,
+        *,
+        story_id: str,
+        workspace_id: str,
+        final_text: str,
+        context: dict[str, Any],
+        fallback_events: list[dict[str, Any]],
+        fallback_questions: list[dict[str, Any]],
+    ) -> LLMResult:
+        fallback = {
+            "detected_story_events": fallback_events,
+            "consequence_questions": fallback_questions,
+            "continuity_warnings": [],
+            "warnings": ["Real LLM was not used."],
+        }
+        input_payload = {
+            "task": "consequence_extraction",
+            "final_text_used_for_analysis": final_text,
+            "context": context,
+        }
+        system = (
+            "You are the Manga Maker System consequence extractor. Read the user's manga plot text and current story context. "
+            "Return JSON only with keys: detected_story_events, consequence_questions, continuity_warnings, warnings. "
+            "Ask only necessary follow-up questions. Use yes/no/custom style options where possible. "
+            "Do not generate violent, explicit, or harmful content. Keep output appropriate for a general audience manga."
+            "Do not create official events. Do not propose final patches."
+        )
+        user = json.dumps(input_payload, ensure_ascii=False)
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=workspace_id,
+            run_type="consequence_extraction",
+            input_payload=input_payload,
+            system_prompt=system,
+            user_prompt=user,
+            fallback=fallback,
+        )
+        out = result.output
+        out.setdefault("detected_story_events", fallback_events)
+        out.setdefault("consequence_questions", fallback_questions)
+        out.setdefault("continuity_warnings", [])
+        out.setdefault("warnings", [])
+        result.output = out
+        return result
+
+    def _call_json_or_fallback(
+        self,
+        *,
+        story_id: str,
+        workspace_id: str,
+        run_type: str,
+        input_payload: dict[str, Any],
+        system_prompt: str,
+        user_prompt: str,
+        fallback: dict[str, Any],
+    ) -> LLMResult:
+        now = datetime.now(timezone.utc).isoformat()
+        run_id = f"llm_{uuid4().hex[:12]}"
+        logger.info("[LLM CALL] run_id=%s story=%s run_type=%s", run_id, story_id, run_type)
+        status = self.status()
+        if not status["real_llm_ready"]:
+            logger.warning("[LLM FALLBACK] run_id=%s reason=real_llm_not_ready", run_id)
+            output = dict(fallback)
+            output.setdefault("warnings", [])
+            output["warnings"] = list(output["warnings"]) + ["Fallback used because real LLM is not configured."]
+            self.registry.create_llm_run({
+                "llm_run_id": run_id,
+                "story_id": story_id,
+                "workspace_id": workspace_id,
+                "run_type": run_type,
+                "model_name": self.settings.openai_model,
+                "prompt_version": self.settings.llm_prompt_version,
+                "input_payload": input_payload,
+                "output_payload": output,
+                "status": "fallback",
+                "error_message": "Real LLM not configured.",
+                "created_at": now,
+                "completed_at": now,
+            })
+            return LLMResult("deterministic_fallback", self.settings.openai_model, True, output, output.get("warnings", []), run_id)
+
+        try:
+            logger.info("[LLM REQUEST] run_id=%s calling real LLM url=%s model=%s", run_id, self.settings.openai_base_url, self.settings.openai_model)
+            output = self._openai_responses_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            logger.info("[LLM SUCCESS] run_id=%s output_keys=%s", run_id, list(output.keys()))
+            self.registry.create_llm_run({
+                "llm_run_id": run_id,
+                "story_id": story_id,
+                "workspace_id": workspace_id,
+                "run_type": run_type,
+                "model_name": self.settings.openai_model,
+                "prompt_version": self.settings.llm_prompt_version,
+                "input_payload": input_payload,
+                "output_payload": output,
+                "status": "success",
+                "error_message": "",
+                "created_at": now,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            return LLMResult("openai", self.settings.openai_model, False, output, output.get("warnings", []), run_id)
+        except Exception as exc:  # local foundation must keep running
+            logger.error("[LLM ERROR] run_id=%s error=%s", run_id, exc, exc_info=True)
+            output = dict(fallback)
+            output.setdefault("warnings", [])
+            output["warnings"] = list(output["warnings"]) + [f"Fallback used after LLM error: {exc}"]
+            self.registry.create_llm_run({
+                "llm_run_id": run_id,
+                "story_id": story_id,
+                "workspace_id": workspace_id,
+                "run_type": run_type,
+                "model_name": self.settings.openai_model,
+                "prompt_version": self.settings.llm_prompt_version,
+                "input_payload": input_payload,
+                "output_payload": output,
+                "status": "fallback_after_error",
+                "error_message": str(exc),
+                "created_at": now,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            return LLMResult("deterministic_fallback", self.settings.openai_model, True, output, output.get("warnings", []), run_id)
+
+    def _openai_responses_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        key = self.settings.openai_api_key.get_secret_value() if self.settings.openai_api_key else ""
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        payload = {
+            "model": self.settings.openai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        url = self.settings.openai_base_url.rstrip("/") + "/chat/completions"
+        logger.info("[LLM HTTP] POST %s model=%s timeout=%s", url, self.settings.openai_model, self.settings.llm_timeout_seconds)
+        with httpx.Client(timeout=self.settings.llm_timeout_seconds) as client:
+            response = client.post(url, headers=headers, json=payload)
+            logger.info("[LLM HTTP] response status=%s", response.status_code)
+            response.raise_for_status()
+            data = response.json()
+        text = self._extract_response_text(data)
+        logger.info("[LLM HTTP] extracted text length=%d", len(text))
+        if not text:
+            raise ValueError("LLM response had no output text")
+        json_text = self._strip_to_json(text)
+        logger.info("[LLM HTTP] json_text length=%d preview=%s", len(json_text), json_text[:120])
+        parsed = json.loads(json_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM JSON output must be an object")
+        return parsed
+
+    def _extract_response_text(self, data: dict[str, Any]) -> str:
+        choices = data.get("choices", [])
+        if not choices:
+            return ""
+        message = choices[0].get("message", {})
+        content = message.get("content", "")
+        return content
+
+    def _strip_to_json(self, text: str) -> str:
+        """Remove <think>...</think> blocks (Qwen3 etc.) then extract the first JSON object."""
+        import re
+        # Strip thinking blocks
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        # Find first { ... } spanning the whole remaining content
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return text[start : end + 1]
+        return text
+
+    def _build_field_schema(self, page: str, target_fields: list[str]) -> str:
+        schemas: dict[str, dict[str, str]] = {
+            "cast": {
+                "status_role": "status(selected|10 options:alive/dead/missing/...), status.custom_status, character_role_level(selected|12 options:Primary Main Character/...), custom_character_role_level",
+                "appearance": "selected_visual_style, age_range, gender_presentation, height, body_type, silhouette_shape, face_shape, skin_tone_or_markings, hair_style, hair_color, eye_shape, eye_color, distinctive_features[], scars_or_birthmarks[], clothing_style, main_outfit_description, alternate_outfits[], accessories[], weapons_or_tools_visible[], iconic_item, color_palette[], visual_symbol_or_motif, visual_contrast_with_other_characters, expression_style, pose_language, manga_panel_presence, first_impression_visual, how_design_reflects_personality, how_design_reflects_backstory, how_design_reflects_power_or_role, ai_image_prompt_notes, negative_prompt_notes, custom_visual_design_details",
+                "faction": "selected(22 alignment options), custom_alignment_type, alignment_details{ linked_master_faction, linked_custom_master_faction, character_specific_faction_name, character_specific_faction_type, character_specific_group_members[], character_role_in_faction, loyalty_level, reason_for_following_this_side, what_the_faction_wants_from_character, what_character_wants_from_faction, conflict_with_faction, can_change_sides, side_change_trigger, hidden_allegiance, public_allegiance, custom_alignment_details }",
+                "backstory": "sub-section backstory{ birthplace, family_situation, parent_or_guardian_status, childhood_summary, important_past_event, past_trauma_or_wound, past_failure, past_success, secret_from_past, what_the_character_lost, what_the_character_gained, who_helped_them_before_story, who_hurt_them_before_story, how_backstory_connects_to_master_world, how_backstory_connects_to_master_factions, how_backstory_connects_to_major_threat, custom_backstory_details }, sub-section mental_state{ current_emotional_state, main_fear, main_desire, inner_need, outer_goal, biggest_strength, biggest_flaw, fatal_flaw, emotional_wound, coping_mechanism, trigger_points[], trust_level, anger_level, confidence_level, self_control_level, risk_tolerance, how_they_handle_conflict, how_they_handle_loss, how_they_handle_power, custom_mental_state_details }, sub-section community_place{ community_name, social_class, public_reputation, private_reputation, how_people_treat_them, who_respects_them[], who_hates_them[], who_protects_them[], who_uses_them[], responsibilities_in_community, rights_or_privileges, restrictions_or_limits, community_expectations, reason_for_current_status, does_character_want_to_change_status, desired_new_status, custom_community_place_details }",
+                "personality": "selected_personality_types[](39 options), personality_details{ core_traits[], positive_traits[], negative_traits[], public_personality, private_personality, personality_mask, true_self, behavior_when_safe, behavior_when_threatened, behavior_under_pressure, speech_style, humor_style, intelligence_style, social_style, leadership_style, morality_style, decision_making_style, conflict_style, relationship_style, trust_style, habit_or_quirk, pet_peeves[], likes[], dislikes[], biggest_personality_flaw, personality_contradiction, how_personality_connects_to_backstory, how_personality_affects_faction_alignment, how_personality_affects_main_goal, personality_change_arc, custom_personality_details }",
+                "powers": "is_enabled(bool), selected_power_origin(22 options), custom_power_origin, selected_power_type(44 options), custom_power_type, selected_power_level(26 options), custom_power_level, reason_if_disabled, power_details{ power_name, power_description, how_power_manifests, visual_style_when_used, main_abilities[], secondary_abilities[], passive_abilities[], ultimate_ability, power_source, power_cost, power_limitations, weaknesses[], forbidden_use, training_needed, control_level, current_mastery_level, growth_potential, risk_to_user, risk_to_others, how_power_connects_to_backstory, how_power_connects_to_faction, how_power_connects_to_major_threat, does_character_hide_power, why_power_is_hidden, is_power_rare_in_world, who_else_has_similar_power[], custom_power_details }",
+                "arc": "sub-section arc_details{ selected_arc_type, custom_arc_type, starting_belief, false_belief_or_lie, truth_they_must_learn, personal_goal, inner_need, outer_goal, main_internal_conflict, main_external_conflict, what_forces_them_to_change, lowest_point, turning_point, final_state, custom_arc_details }, sub-section threat_connection{ linked_major_threat, linked_minor_threats[], why_character_cares_about_threat, how_personal_goal_clashes_with_major_threat, how_major_threat_blocks_character_goal, how_character_can_damage_or_stop_threat, how_threat_can_break_character, personal_stakes_if_threat_wins, community_stakes_if_threat_wins, faction_stakes_if_threat_wins, world_stakes_if_threat_wins, final_conflict_role, custom_threat_connection_details }",
+            },
+            "side": {
+                "status_role": "character_role_level.selected(12 options), character_role_level.custom_character_role_level, status.selected(10 options), status.custom_status",
+                "appearance": "appearance_and_visual_design.appearance_details{ age_range, gender_presentation, height, body_type, silhouette_shape, face_shape, skin_tone_or_markings, hair_style, hair_color, eye_shape, eye_color, distinctive_features[], scars_or_birthmarks[], clothing_style, main_outfit_description, alternate_outfits[], accessories[], weapons_or_tools_visible[], iconic_item, color_palette[], visual_symbol_or_motif, visual_contrast_with_other_characters, expression_style, pose_language, manga_panel_presence, first_impression_visual, how_design_reflects_personality, how_design_reflects_backstory, how_design_reflects_power_or_role, ai_image_prompt_notes, negative_prompt_notes, custom_visual_design_details }",
+                "faction": "main_character_faction_alignment{ selected(22 alignment options), custom_alignment_type, alignment_details{ linked_master_faction, linked_custom_master_faction, character_specific_faction_name, character_specific_faction_type, character_specific_group_members[], character_role_in_faction, loyalty_level, reason_for_following_this_side, what_the_faction_wants_from_character, what_character_wants_from_faction, conflict_with_faction, can_change_sides, side_change_trigger, hidden_allegiance, public_allegiance, custom_alignment_details } }",
+                "backstory": "character_backstory_mental_state_and_community_place.backstory_details{ birthplace, family_situation, parent_or_guardian_status, childhood_summary, important_past_event, past_trauma_or_wound, past_failure, past_success, secret_from_past, what_the_character_lost, what_the_character_gained, who_helped_them_before_story, who_hurt_them_before_story, how_backstory_connects_to_master_world, how_backstory_connects_to_master_factions, how_backstory_connects_to_major_threat, custom_backstory_details }",
+                "personality": "character_personality{ selected_personality_types[](39 options), personality_details{ core_traits[], positive_traits[], negative_traits[], public_personality, private_personality, personality_mask, true_self, behavior_when_safe, behavior_when_threatened, behavior_under_pressure, speech_style, humor_style, intelligence_style, social_style, leadership_style, morality_style, decision_making_style, conflict_style, relationship_style, trust_style, habit_or_quirk, pet_peeves[], likes[], dislikes[], biggest_personality_flaw, personality_contradiction, how_personality_connects_to_backstory, how_personality_affects_faction_alignment, how_personality_affects_main_goal, personality_change_arc, custom_personality_details } }",
+            },
+            "board": {
+                "arc_overview": "arc_title, arc_number(int), arc_type, arc_length_type(selected|One-Shot/Short/Medium/Long/Saga/Season/Full Series/Custom), arc_summary, starting_status_quo, main_story_question, central_emotional_question, main_external_conflict, main_internal_conflict, main_relationship_conflict, main_threat_used, minor_threats_used[](use names from context), main_factions_used[](use names from context), main_characters_used[](use names from context), relationships_used[](use IDs from context), ending_type_target, custom_arc_overview_details",
+                "chapters": "array of objects [{ chapter_id(use ch_NNN format like ch_001), chapter_number(int, sequential), arc_title(use arc_title from context to link chapter to its arc), chapter_title, chapter_purpose, structure_section(use one valid tag: ki_introduction/sho_development/ten_twist_or_turn/ketsu_conclusion/act_1_setup/act_2_escalation/act_3_climax_resolution/mystery_setup/clue_investigation/escalation_pressure/major_reveal/confrontation_payoff), summary, main_conflict, emotional_beat, twist_or_hook, ending_cliffhanger, characters_present[](string[] use character names from context), factions_used[](string[] use faction names from context), threats_used[](string[] use threat names from context), relationships_used[](string[] use relationship IDs from context), world_rules_shown[](string[]), power_system_shown[](string[]), custom_chapter_details }]",
+                "structure": "For Kishotenketsu: kishotenketsu_outline{ ki_introduction{ initial_mystery_or_question, opening_image, chapter_range }, sho_development{ tension_growth, chapter_range }, ten_twist_or_turn{ main_twist, hidden_truth_revealed, major_threat_recontextualized, relationship_reversal, character_arc_turning_point, chapter_range }, ketsu_conclusion{ conflict_resolution, emotional_resolution, relationship_resolution, world_state_after_arc, character_final_state, chapter_range } }. For Three-Act/Hero's Journey: conflict_driven_outline{ act_1_setup{ opening_hook, normal_world, inciting_incident, first_major_choice, main_goal_locked, chapter_range }, act_2_escalation{ midpoint_reveal_or_defeat, stakes_increase, chapter_range }, act_3_climax_resolution{ darkest_moment, final_plan_or_breakthrough, climax_battle_or_confrontation, major_threat_outcome, character_arc_payoff, relationship_payoff, ending_image, chapter_range } }. For Mystery Arc, plan chapters using these structure_section tags in order: mystery_setup, clue_investigation, escalation_pressure, major_reveal, confrontation_payoff.",
+            },
+            "scenes": {
+                "scenes_for_chapter": "array of objects [{ scene_id, chapter_id(use context chapter IDs), scene_order(int), location, time, characters_present[](use character names from context), scene_goal, scene_conflict, relationship_dynamic_used, new_information_revealed, action_or_dialogue_focus, visual_manga_moment, panel_mood, ending_beat, custom_scene_details }]",
+                "scene_count_recommendations": "array of objects [{ chapter_id(use context chapter IDs), chapter_number(int), chapter_title, current_scene_count(int), recommended_scene_count(int between 1 and 8), reason, must_cover_beats[](string[]) }]",
+            },
+            "threads": {
+                "main": "goal, obstacles[](string[]), turning_points[](string[]), resolution",
+                "character_arcs": "array [{ character_id(use IDs from context), starting_state, growth_beats[](string[]), lowest_point, final_state }]",
+                "relationships": "array [{ relationship_id(use IDs from context), start_dynamic, change_beats[](string[]), breaking_point, final_dynamic }]",
+                "threats": "array [{ threat_id_or_name(use names from context), first_hint, escalation_beats[](string[]), reveal, final_outcome }]",
+                "powers": "array [{ character_id(use IDs from context), power_name, first_use, training_or_failure_beats[](string[]), breakthrough, cost_or_consequence }]",
+            },
+            "world": {
+                "world_core_details": (
+                    "object with optional custom_world_type, custom_rules, custom_factions, custom_threats, "
+                    "rule_details{ magic_rules, power_rules, demon_rules, monster_rules, god_rules, technology_rules, "
+                    "race_species_rules, realm_dimension_rules, forbidden_rules, power_limits, custom_rule_details }, "
+                    "faction_details keyed by selected faction slug, each { main_ruling_side, opposing_side, neutral_side, hidden_side, ruling_side_details, conflict_map }, "
+                    "threat_details{ main_threat_source, main_threat_goal, main_threat_target, stakes_if_major_threat_wins, time_limit, hidden_truth_behind_threat }. "
+                    "Only fill fields relevant to the user's selected options in partial_input. Do not change selections."
+                ),
+            },
+        }
+        page_schema = schemas.get(page, {})
+        matched: list[str] = []
+        for tf in target_fields:
+            if tf in page_schema:
+                matched.append(f"  - {tf}: {page_schema[tf]}")
+        if not matched:
+            return ""
+        return "\nREQUIRED sub-fields — fill EVERY one of these for each target field. Do not omit any:\n" + "\n".join(matched)
+
+    def _build_scene_fallback(
+        self,
+        *,
+        context: dict[str, Any],
+        generation_hints: dict[str, Any],
+        partial_input: dict[str, Any],
+    ) -> dict[str, Any]:
+        plot_data = context.get("plot_outline", {})
+        chapters = plot_data.get("chapter_or_episode_list", {}).get("chapters", []) or []
+        scenes = plot_data.get("scene_cards", {}).get("scenes", []) or []
+        target_ids = generation_hints.get("chapter_ids", []) or partial_input.get("selected_chapter_ids", [])
+        chapter_map = {ch.get("chapter_id"): ch for ch in chapters if isinstance(ch, dict) and ch.get("chapter_id")}
+        if not target_ids:
+            target_ids = list(chapter_map.keys())[:1]
+        scenes_per_chapter = int(generation_hints.get("scenes_per_chapter") or 3)
+        scenes_per_chapter = max(1, min(scenes_per_chapter, 6))
+
+        generated: list[dict[str, Any]] = []
+        for cid in target_ids:
+            chapter = chapter_map.get(cid)
+            if not chapter:
+                continue
+            existing = [s for s in scenes if isinstance(s, dict) and s.get("chapter_id") == cid]
+            start_order = len(existing) + 1
+            chapter_title = chapter.get("chapter_title") or f"Chapter {chapter.get('chapter_number', '')}".strip()
+            chapter_summary = chapter.get("summary") or chapter.get("chapter_purpose") or ""
+            characters = chapter.get("characters_present", [])
+            if not isinstance(characters, list):
+                characters = [str(characters)] if characters else []
+            beats = [
+                ("Opening pressure", "Establish the location, mood, and immediate objective for the chapter."),
+                ("Core confrontation", "Push the chapter conflict into a concrete choice, chase, argument, discovery, or fight."),
+                ("Exit hook", "End with a visual turn, new clue, cost, or cliffhanger that carries into the next chapter."),
+                ("Aftershock", "Show the consequence of the confrontation and lock the next story question."),
+                ("Quiet contrast", "Give the reader an emotional breath while preserving tension."),
+                ("Final sting", "Close the chapter with a sharp manga-panel reveal."),
+            ]
+            for offset in range(scenes_per_chapter):
+                order = start_order + offset
+                label, purpose = beats[offset % len(beats)]
+                generated.append({
+                    "scene_id": "",
+                    "chapter_id": cid,
+                    "scene_order": order,
+                    "location": "Key chapter location",
+                    "time": "During the chapter sequence",
+                    "characters_present": characters,
+                    "scene_goal": f"{label} for Ch.{chapter.get('chapter_number', '?')} — {chapter_title}. {purpose}",
+                    "scene_conflict": chapter.get("main_conflict") or f"Conflict escalates around: {chapter_summary[:160]}",
+                    "relationship_dynamic_used": "",
+                    "new_information_revealed": chapter.get("twist_or_hook") or chapter.get("ending_cliffhanger") or "",
+                    "action_or_dialogue_focus": "Balance character reaction with plot movement.",
+                    "visual_manga_moment": chapter.get("ending_cliffhanger") or f"A strong visual beat crystallizes the purpose of {chapter_title}.",
+                    "panel_mood": chapter.get("emotional_beat") or "Tense",
+                    "ending_beat": chapter.get("ending_cliffhanger") or "The scene ends with a clear forward hook.",
+                    "custom_scene_details": "Deterministic fallback scene. Review and polish before script generation.",
+                })
+        return {"scenes_for_chapter": generated}
+
+    def _build_scene_recommendation_fallback(
+        self,
+        *,
+        context: dict[str, Any],
+        generation_hints: dict[str, Any],
+        partial_input: dict[str, Any],
+    ) -> dict[str, Any]:
+        plot_data = context.get("plot_outline", {})
+        chapters = plot_data.get("chapter_or_episode_list", {}).get("chapters", []) or []
+        scenes = plot_data.get("scene_cards", {}).get("scenes", []) or []
+        target_ids = generation_hints.get("chapter_ids", []) or partial_input.get("selected_chapter_ids", [])
+        chapter_map = {ch.get("chapter_id"): ch for ch in chapters if isinstance(ch, dict) and ch.get("chapter_id")}
+        if not target_ids:
+            target_ids = list(chapter_map.keys())
+
+        recommendations: list[dict[str, Any]] = []
+        for cid in target_ids:
+            chapter = chapter_map.get(cid)
+            if not chapter:
+                continue
+            current_scene_count = len([s for s in scenes if isinstance(s, dict) and s.get("chapter_id") == cid])
+            text_parts = [
+                chapter.get("summary", ""),
+                chapter.get("chapter_purpose", ""),
+                chapter.get("main_conflict", ""),
+                chapter.get("emotional_beat", ""),
+                chapter.get("twist_or_hook", ""),
+                chapter.get("ending_cliffhanger", ""),
+                chapter.get("custom_chapter_details", ""),
+            ]
+            narrative_text = " ".join(str(part) for part in text_parts if part)
+            signal_count = sum(1 for part in text_parts if str(part).strip())
+            recommended = 3
+            if len(narrative_text) > 900 or signal_count >= 6:
+                recommended = 5
+            elif len(narrative_text) > 500 or signal_count >= 4:
+                recommended = 4
+            if any(chapter.get(k) for k in ("twist_or_hook", "ending_cliffhanger")):
+                recommended = max(recommended, 4)
+            recommended = max(1, min(recommended, 8))
+
+            beats = ["opening situation", "central conflict or discovery", "exit hook"]
+            if recommended >= 4:
+                beats.insert(2, "emotional reaction or relationship pressure")
+            if recommended >= 5:
+                beats.insert(3, "visual set-piece or decisive choice")
+
+            recommendations.append({
+                "chapter_id": cid,
+                "chapter_number": chapter.get("chapter_number", 0),
+                "chapter_title": chapter.get("chapter_title", ""),
+                "current_scene_count": current_scene_count,
+                "recommended_scene_count": recommended,
+                "reason": "Estimated from chapter summary density, conflict, emotional beat, twist, and cliffhanger fields.",
+                "must_cover_beats": beats,
+            })
+        return {"scene_count_recommendations": recommendations}
+
+    def _normalize_generated_aliases(self, *, page: str, target_fields: list[str], generated: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(generated)
+        if page == "threads":
+            aliases = {
+                "main_plot_thread": "main",
+                "character_arc_threads": "character_arcs",
+                "relationship_threads": "relationships",
+                "threat_threads": "threats",
+                "power_threads": "powers",
+            }
+            for source, target in aliases.items():
+                if source in normalized and target not in normalized:
+                    normalized[target] = normalized[source]
+        if page == "scenes":
+            if "scenes_for_chapter" in target_fields:
+                if isinstance(normalized.get("scenes"), list) and "scenes_for_chapter" not in normalized:
+                    normalized["scenes_for_chapter"] = normalized["scenes"]
+                if isinstance(normalized.get("scene_cards"), list) and "scenes_for_chapter" not in normalized:
+                    normalized["scenes_for_chapter"] = normalized["scene_cards"]
+            if "scene_count_recommendations" in target_fields:
+                if isinstance(normalized.get("recommendations"), list) and "scene_count_recommendations" not in normalized:
+                    normalized["scene_count_recommendations"] = normalized["recommendations"]
+        if page == "court":
+            if "suggested_answers" in normalized and "suggest_answers" not in normalized:
+                normalized["suggest_answers"] = normalized["suggested_answers"]
+            if "suggest_answers" in normalized and "suggested_answers" not in normalized:
+                normalized["suggested_answers"] = normalized["suggest_answers"]
+        return normalized
+
+    def _clip_text(self, value: Any, limit: int = 600) -> Any:
+        if isinstance(value, str):
+            text = value.strip()
+            return text[:limit] + ("..." if len(text) > limit else "")
+        if isinstance(value, list):
+            return [self._clip_text(item, limit) for item in value[:12]]
+        if isinstance(value, dict):
+            return {k: self._clip_text(v, limit) for k, v in value.items()}
+        return value
+
+    def _compact_generation_context(
+        self,
+        *,
+        page: str,
+        context: dict[str, Any],
+        generation_hints: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        ms = context.get("master_story", {}) or {}
+        chars = context.get("characters", {}) or {}
+        plot = context.get("plot_outline", {}) or {}
+        workspace = context.get("plot_workspace", {}) or {}
+
+        major_profiles = chars.get("created_major_character_profiles", []) or []
+        side_profiles = chars.get("created_side_character_profiles", []) or []
+        character_refs = [
+            {
+                "id": p.get("profile_id", ""),
+                "name": p.get("character_name", ""),
+                "role": self._clip_text(p.get("character_role_level", ""), 120),
+                "faction": self._clip_text(p.get("main_character_faction_alignment", ""), 180),
+                "arc": self._clip_text(p.get("character_arc_and_threat_connection", p.get("arc", "")), 240),
+            }
+            for p in major_profiles[:20]
+        ]
+        side_refs = [{"id": p.get("profile_id", ""), "name": p.get("character_name", "")} for p in side_profiles[:20]]
+
+        chapters = plot.get("chapter_or_episode_list", {}).get("chapters", []) or []
+        chapter_refs = [
+            {
+                "chapter_id": ch.get("chapter_id", ""),
+                "chapter_number": ch.get("chapter_number", 0),
+                "chapter_title": ch.get("chapter_title", ""),
+                "structure_section": ch.get("structure_section", ""),
+                "summary": self._clip_text(ch.get("summary", ""), 500),
+                "main_conflict": self._clip_text(ch.get("main_conflict", ""), 240),
+                "emotional_beat": self._clip_text(ch.get("emotional_beat", ""), 200),
+                "twist_or_hook": self._clip_text(ch.get("twist_or_hook", ""), 200),
+                "ending_cliffhanger": self._clip_text(ch.get("ending_cliffhanger", ""), 220),
+                "characters_present": ch.get("characters_present", []),
+            }
+            for ch in chapters[-24:]
+        ]
+
+        target_ids = (generation_hints or {}).get("chapter_ids", [])
+        if page == "scenes" and target_ids:
+            chapter_refs = [ch for ch in chapter_refs if ch.get("chapter_id") in target_ids]
+
+        if page == "threads":
+            return {
+                "story": {
+                    "idea": self._clip_text(ms.get("idea_so_far", ""), 280),
+                    "threats": {
+                        "major": self._clip_text((ms.get("major_threats_and_minor_side_threats", {}) or {}).get("major_threat", ""), 160),
+                        "minor": self._clip_text((ms.get("major_threats_and_minor_side_threats", {}) or {}).get("minor_side_threats", []), 80),
+                    },
+                    "factions": self._clip_text((ms.get("major_factions_and_ruling_sides", {}) or {}).get("selected", []), 80),
+                },
+                "characters": {
+                    "major": [{"id": p.get("profile_id", ""), "name": p.get("character_name", "")} for p in major_profiles[:12]],
+                    "relationships": [
+                        {
+                            "id": r.get("relationship_id", "") or _stable_rel_id_from_pair(r.get("characters_involved", "")),
+                            "characters": self._clip_text(r.get("characters_involved", ""), 80),
+                            "type": self._clip_text(r.get("relationship_change_type", ""), 80),
+                        }
+                        for r in (chars.get("character_relationship_map", {}).get("relationships", []) or [])[:8]
+                        if isinstance(r, dict)
+                    ],
+                },
+                "arc": self._clip_text({
+                    "title": (plot.get("story_arc_overview", {}) or {}).get("arc_title", ""),
+                    "summary": (plot.get("story_arc_overview", {}) or {}).get("arc_summary", ""),
+                    "external_conflict": (plot.get("story_arc_overview", {}) or {}).get("main_external_conflict", ""),
+                    "internal_conflict": (plot.get("story_arc_overview", {}) or {}).get("main_internal_conflict", ""),
+                    "story_question": (plot.get("story_arc_overview", {}) or {}).get("main_story_question", ""),
+                }, 360),
+                "chapters": [
+                    {
+                        "id": ch.get("chapter_id", ""),
+                        "n": ch.get("chapter_number", 0),
+                        "title": ch.get("chapter_title", ""),
+                        "section": ch.get("structure_section", ""),
+                        "summary": self._clip_text(ch.get("summary", ""), 180),
+                        "conflict": self._clip_text(ch.get("main_conflict", ""), 100),
+                        "hook": self._clip_text(ch.get("ending_cliffhanger", "") or ch.get("twist_or_hook", ""), 100),
+                    }
+                    for ch in chapters[-12:]
+                ],
+                "existing_threads": self._clip_text(plot.get("plot_threads", {}), 160),
+            }
+
+        compact = {
+            "master_story": {
+                "idea_so_far": self._clip_text(ms.get("idea_so_far", ""), 500),
+                "story_type": self._clip_text(ms.get("story_type", {}), 180),
+                "world_type": self._clip_text(ms.get("world_type", {}), 180),
+                "world_rules": self._clip_text(ms.get("world_master_rules", {}), 500),
+                "factions": self._clip_text(ms.get("major_factions_and_ruling_sides", {}), 500),
+                "threats": self._clip_text(ms.get("major_threats_and_minor_side_threats", {}), 500),
+            },
+            "characters": {
+                "major": character_refs,
+                "side": side_refs,
+                "relationships": self._clip_text(chars.get("character_relationship_map", {}).get("relationships", []), 300),
+            },
+            "plot_outline": {
+                "narrative_structure": plot.get("narrative_structure", {}),
+                "story_arc_overview": self._clip_text(plot.get("story_arc_overview", {}), 700),
+                "structure_editors": self._clip_text({
+                    "kishotenketsu_outline": plot.get("kishotenketsu_outline", {}),
+                    "conflict_driven_outline": plot.get("conflict_driven_outline", {}),
+                }, 400),
+                "chapters": chapter_refs,
+                "scene_counts": {
+                    ch.get("chapter_id"): len([
+                        s for s in (plot.get("scene_cards", {}).get("scenes", []) or [])
+                        if isinstance(s, dict) and s.get("chapter_id") == ch.get("chapter_id")
+                    ])
+                    for ch in chapter_refs
+                },
+                "plot_threads": self._clip_text(plot.get("plot_threads", {}), 500),
+            },
+        }
+
+        if page == "court":
+            compact["plot_workspace"] = {
+                "user_free_writing": self._clip_text(workspace.get("user_free_writing", {}), 900),
+                "consequence_questions": self._clip_text(workspace.get("consequence_questions", []), 700),
+            }
+        return compact
+
+    def generate_fields(
+        self,
+        *,
+        story_id: str,
+        page: str,
+        target_fields: list[str],
+        partial_input: dict[str, Any],
+        context: dict[str, Any],
+        user_constraints: dict[str, Any] | None = None,
+        generation_hints: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        workspace_id = f"ai_gen_{page}"
+        now = datetime.now(timezone.utc).isoformat()
+        run_id = f"llm_{uuid4().hex[:12]}"
+        logger.info("[LLM GEN] run_id=%s story=%s page=%s fields=%s", run_id, story_id, page, target_fields)
+
+        system_prompts: dict[str, str] = {
+            "cast": (
+                "You are the Manga Maker character profile generator. Generate character profile fields as JSON. "
+                "Use the story context (world rules, factions, threats, plot outline) to create consistent, story-relevant character details. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field. "
+                "For array fields use arrays. For text fields use strings. Do NOT fabricate character names not in context."
+            ),
+            "board": (
+                "You are the Manga Maker plot generator. Generate plot outline fields as JSON. "
+                "Use the story context (world rules, factions, characters, threats) to create consistent plot details. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field. "
+                "When generating chapters, each chapter MUST have a unique chapter_id like 'ch_001', 'ch_002' and sequential chapter_number. "
+                "Generate chapters that naturally follow the previous chapter's events and the arc's story question."
+            ),
+            "scenes": (
+                "You are the Manga Maker scene generator. Generate scene card fields as JSON. "
+                "Use the story context (characters, locations, plot outline) to create consistent scene details. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field."
+            ),
+            "threads": (
+                "You are the Manga Maker plot thread generator. Generate plot thread fields as JSON. "
+                "Analyze the story context (characters, relationships, threats, plot) to create meaningful thread analysis. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field."
+            ),
+            "court": (
+                "You are the Manga Maker consequence advisor. Suggest answers for consequence questions as JSON. "
+                "Read the story context and consequence questions. For each question, suggest the most logical answer based on story continuity. "
+                "Return JSON only with key 'suggested_answers': array of { question_id, suggested_selected, reasoning }."
+            ),
+            "world": (
+                "You are the Manga Maker world builder. Generate world-building fields as JSON. "
+                "Use the story context (idea, genre, story foundation) to create consistent world details. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field."
+            ),
+            "seed": (
+                "You are the Manga Maker story idea generator. Generate story seed fields as JSON. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field."
+            ),
+        }
+        system = (
+            system_prompts.get(page, system_prompts["seed"])
+            + " Never return {}, null, an empty array for a requested field, or prose instead of JSON. "
+            + "If a field is requested, return that field with usable story-specific content."
+        )
+        field_list = ", ".join(target_fields) if target_fields else "all fields"
+
+        # ---- Build next-chapter instruction when chapters are targeted ----
+        chapter_context_msg = ""
+        if page == "board" and "chapters" in target_fields:
+            plot_data = context.get("plot_outline", {})
+            existing_chapters = plot_data.get("chapter_or_episode_list", {}).get("chapters", [])
+            arc_data = plot_data.get("story_arc_overview", {})
+            structure_type = (plot_data.get("narrative_structure", {}) or {}).get("selected", "")
+            arc_title = arc_data.get("arc_title", "Untitled Arc")
+            arc_summary = arc_data.get("arc_summary", "")
+            arc_question = arc_data.get("main_story_question", "")
+            ch_count = len(existing_chapters)
+            next_num = ch_count + 1
+            next_id = f"ch_{next_num:03d}"
+
+            chapter_context_msg = (
+                f"\n\n=== CHAPTER GENERATION INSTRUCTIONS ===\n"
+                f"You are generating the NEXT chapter. This is chapter #{next_num} (chapter_id: {next_id}).\n"
+                f"It belongs to arc: \"{arc_title}\".\n"
+            )
+            if arc_summary:
+                chapter_context_msg += f"Arc summary: {arc_summary}\n"
+            if arc_question:
+                chapter_context_msg += f"Arc story question: {arc_question}\n"
+
+            if existing_chapters:
+                last_ch = existing_chapters[-1]
+                chapter_context_msg += (
+                    f"There are currently {ch_count} chapters.\n"
+                    f"Previous chapter (#{ch_count}): \"{last_ch.get('chapter_title', 'Unknown')}\".\n"
+                )
+                if last_ch.get("summary"):
+                    chapter_context_msg += f"Previous chapter summary: {last_ch.get('summary')}\n"
+                if last_ch.get("ending_cliffhanger"):
+                    chapter_context_msg += f"Previous chapter ended with: {last_ch.get('ending_cliffhanger')}\n"
+                chapter_context_msg += f"Your chapter must naturally continue from where the previous chapter left off.\n"
+            else:
+                chapter_context_msg += f"This is the FIRST chapter. It must introduce the arc, setting, tone, and main characters.\n"
+
+            # Add generation_hints from frontend
+            hints = generation_hints or {}
+            if hints.get("chapter_number"):
+                chapter_context_msg += f"Requested chapter number: {hints['chapter_number']}\n"
+            if hints.get("chapter_id"):
+                chapter_context_msg += f"Requested chapter ID: {hints['chapter_id']}\n"
+            if hints.get("chapter_title_hint"):
+                chapter_context_msg += f"Title hint from user: {hints['chapter_title_hint']}\n"
+            if hints.get("arc_title"):
+                chapter_context_msg += f"Requested arc: {hints['arc_title']}\n"
+            if hints.get("arc_length_type"):
+                chapter_context_msg += f"Selected arc length: {hints['arc_length_type']}\n"
+            if hints.get("arc_length_guidance"):
+                chapter_context_msg += f"Arc length pacing guidance: {hints['arc_length_guidance']}\n"
+            if hints.get("target_chapter_label"):
+                chapter_context_msg += (
+                    f"Planned arc size: {hints['target_chapter_label']} "
+                    f"(min {hints.get('target_chapter_min')}, ideal {hints.get('target_chapter_ideal')}, max {hints.get('target_chapter_max')}).\n"
+                )
+            if hints.get("structure_type"):
+                chapter_context_msg += f"Selected narrative structure: {hints['structure_type']}\n"
+            if hints.get("structure_beats"):
+                chapter_context_msg += f"Required structure beat order: {json.dumps(hints['structure_beats'], ensure_ascii=False)}\n"
+            if hints.get("preferred_next_structure_section"):
+                chapter_context_msg += f"Preferred next structure_section: {hints['preferred_next_structure_section']}\n"
+            target_ideal = hints.get("target_chapter_ideal")
+            target_max = hints.get("target_chapter_max")
+            if isinstance(target_ideal, int) and next_num >= target_ideal:
+                chapter_context_msg += "Because this chapter is at or beyond the ideal arc length, steer toward reveal, payoff, resolution, or a clean transition instead of opening a new sub-arc.\n"
+            if isinstance(target_max, int) and next_num > target_max:
+                chapter_context_msg += "This chapter is beyond the planned maximum. Only generate it as an intentional extension, and make it resolve or bridge rather than prolong the current arc.\n"
+            if structure_type == "Mystery Arc":
+                chapter_context_msg += (
+                    "This arc uses Mystery Arc structure. The chapter structure_section MUST be one of: "
+                    "mystery_setup, clue_investigation, escalation_pressure, major_reveal, confrontation_payoff. "
+                    "Do not use act_1_setup/act_2_escalation/act_3_climax_resolution for Mystery Arc chapters.\n"
+                )
+            # List ALL existing chapters so LLM knows what's already done
+            if existing_chapters:
+                chapter_context_msg += "\nExisting chapters (do NOT recreate any of these):\n"
+                for ch in existing_chapters:
+                    chapter_context_msg += f"  - ch_{ch.get('chapter_number',0):03d} \"{ch.get('chapter_title','?')}\" -> {ch.get('summary','')[:80]}\n"
+            chapter_context_msg += (
+                f"Generate exactly ONE chapter object with ALL sub-fields filled. "
+                f"MUST use chapter_id=\"{next_id}\" and chapter_number={next_num}. "
+                f"Do NOT reuse any existing chapter_id. Do NOT return an empty chapters array.\n"
+            )
+
+        # ---- Build arc overview generation instructions when arc_overview is targeted ----
+        arc_context_msg = ""
+        if page == "board" and "arc_overview" in target_fields:
+            plot_data = context.get("plot_outline", {})
+            arc_data = plot_data.get("story_arc_overview", {})
+            hints = generation_hints or {}
+            existing_arc_title = arc_data.get("arc_title", "")
+            existing_arc_number = arc_data.get("arc_number")
+            existing_arc_summary = arc_data.get("arc_summary", "")
+            chapters = plot_data.get("chapter_or_episode_list", {}).get("chapters", [])
+
+            arc_context_msg = "\n\n=== ARC OVERVIEW GENERATION INSTRUCTIONS ===\n"
+            if existing_arc_title and existing_arc_summary:
+                arc_context_msg += f"You are EDITING / REPLACING an existing arc: \"{existing_arc_title}\""
+                if existing_arc_number:
+                    arc_context_msg += f" (Arc #{existing_arc_number})"
+                arc_context_msg += (
+                    f".\nCurrent arc summary: {existing_arc_summary[:300]}\n"
+                    f"Current external conflict: {arc_data.get('main_external_conflict', 'not set')}\n"
+                    f"Current internal conflict: {arc_data.get('main_internal_conflict', 'not set')}\n"
+                    f"Current story question: {arc_data.get('main_story_question', 'not set')}\n"
+                )
+                if chapters:
+                    arc_context_msg += f"Chapters in this arc: {len(chapters)}. "
+                    arc_context_msg += f"Chapter range: Ch.{chapters[0].get('chapter_number', 1)} - Ch.{chapters[-1].get('chapter_number', len(chapters))}\n"
+                    arc_context_msg += "Improve existing arc fields while maintaining chapter continuity.\n"
+            else:
+                arc_context_msg += "You are generating a NEW arc overview for the FIRST time.\n"
+                arc_context_msg += "This is Arc #1 — the opening arc that sets up the story world, characters, and central conflict.\n"
+                arc_context_msg += "Set arc_number=1. Create a compelling arc title that reflects the story's core theme.\n"
+                arc_context_msg += "The arc summary should establish the status quo, introduce the main story question, and hint at the ending direction.\n"
+            hints = generation_hints or {}
+            if hints.get("arc_number"):
+                arc_context_msg += f"Requested arc number: {hints['arc_number']}\n"
+            if hints.get("arc_title"):
+                arc_context_msg += f"Requested arc title: {hints['arc_title']}\n"
+            if hints.get("arc_type"):
+                arc_context_msg += f"Requested arc type: {hints['arc_type']}\n"
+            if hints.get("arc_summary_hint"):
+                arc_context_msg += f"Arc summary hint from user: {hints['arc_summary_hint']}\n"
+            arc_context_msg += "Fill EVERY sub-field in the arc_overview schema. Do not omit any field.\n"
+
+        # ---- Build scene generation / recommendation instructions when scene fields are targeted ----
+        scene_context_msg = ""
+        if page == "scenes" and ("scenes_for_chapter" in target_fields or "scene_count_recommendations" in target_fields):
+            plot_data = context.get("plot_outline", {})
+            all_chapters = plot_data.get("chapter_or_episode_list", {}).get("chapters", [])
+            all_scenes = plot_data.get("scene_cards", {}).get("scenes", [])
+            hints = generation_hints or {}
+            target_chapter_ids = hints.get("chapter_ids", []) or partial_input.get("selected_chapter_ids", [])
+            chapter_id_map = {ch.get("chapter_id"): ch for ch in all_chapters}
+            if not target_chapter_ids and chapter_id_map:
+                target_chapter_ids = [list(chapter_id_map.keys())[0]]
+            target_chapters_detail = []
+            for cid in target_chapter_ids:
+                ch = chapter_id_map.get(cid)
+                if ch:
+                    ch_scenes = [s for s in all_scenes if isinstance(s, dict) and s.get("chapter_id") == cid]
+                    scene_count = len(ch_scenes)
+                    target_chapters_detail.append({
+                        "chapter_id": ch.get("chapter_id", cid),
+                        "title": ch.get("chapter_title", ""),
+                        "summary": ch.get("summary", ""),
+                        "characters_present": ch.get("characters_present", []),
+                        "ending_cliffhanger": ch.get("ending_cliffhanger", ""),
+                        "main_conflict": ch.get("main_conflict", ""),
+                        "current_scene_count": scene_count,
+                        "next_scene_order": scene_count + 1,
+                    })
+            if target_chapters_detail:
+                scene_context_msg = "\n\n=== SCENE CHAPTER CONTEXT ===\n"
+                for tc in target_chapters_detail:
+                    scene_context_msg += (
+                        f"\nChapter: \"{tc['title']}\" (ID: {tc['chapter_id']})\n"
+                        f"Current scenes: {tc['current_scene_count']}. Next scene_order: {tc['next_scene_order']}.\n"
+                    )
+                    if tc.get("summary"):
+                        scene_context_msg += f"Chapter summary: {tc['summary']}\n"
+                    if tc.get("characters_present"):
+                        scene_context_msg += f"Characters present: {', '.join(tc['characters_present'])}\n"
+                    if tc.get("ending_cliffhanger"):
+                        scene_context_msg += f"Ending cliffhanger: {tc['ending_cliffhanger']}\n"
+                if "scene_count_recommendations" in target_fields:
+                    scene_context_msg += (
+                        "\nRecommend how many total scene cards each selected chapter needs before manga script generation.\n"
+                        "Return JSON with exactly this top-level key: scene_count_recommendations.\n"
+                        "Each recommendation MUST include chapter_id, chapter_number, chapter_title, current_scene_count, "
+                        "recommended_scene_count, reason, and must_cover_beats.\n"
+                        "recommended_scene_count is the total target for the chapter, not just additional scenes. Use 1-8. "
+                        "Base the count on chapter complexity, number of plot turns, emotional beats, investigation/action density, and cliffhanger needs.\n"
+                        "This is READ-ONLY planning. Do NOT generate scene card objects. Do NOT return scenes_for_chapter.\n"
+                    )
+                if "scenes_for_chapter" in target_fields:
+                    scenes_per_chapter = int(hints.get("scenes_per_chapter") or 3)
+                    scenes_per_chapter = max(1, min(scenes_per_chapter, 6))
+                    scene_context_msg += (
+                        f"\nGenerate exactly {scenes_per_chapter} new scenes per target chapter unless existing scenes already cover the chapter.\n"
+                        "Return JSON with exactly this top-level key: scenes_for_chapter.\n"
+                        "Each scene MUST include chapter_id, scene_order, location, time, characters_present, scene_goal, scene_conflict, "
+                        "relationship_dynamic_used, new_information_revealed, action_or_dialogue_focus, visual_manga_moment, panel_mood, ending_beat, custom_scene_details.\n"
+                        "Use the provided chapter_id exactly. Continue scene_order after existing scenes. Leave scene_id empty; the backend assigns canonical IDs.\n"
+                        "Do NOT return {}, do NOT return an empty scenes_for_chapter array, and do NOT create scenes for unselected chapters.\n"
+                    )
+            elif not target_chapter_ids:
+                scene_context_msg = "\n\n=== SCENE GENERATION ===\nWARNING: No target chapter specified. Use available chapters if recommendations are requested; otherwise use scene_order starting at 1.\n"
+
+        # ---- Build thread generation instructions when threads are targeted ----
+        thread_context_msg = ""
+        if page == "threads":
+            # Extract curated entity lists from context
+            char_data = context.get("characters", {})
+            ms_data = context.get("master_story", {})
+            plot_data = context.get("plot_outline", {})
+            curated_chars = []
+            for p in char_data.get("created_major_character_profiles", []):
+                curated_chars.append({
+                    "character_id": p.get("profile_id", ""),
+                    "name": p.get("character_name", ""),
+                    "role": p.get("character_role_level", {}).get("selected", "") if isinstance(p.get("character_role_level"), dict) else "",
+                })
+            curated_rels = []
+            for r in char_data.get("character_relationship_map", {}).get("relationships", []):
+                pair = r.get("characters_involved", "")
+                curated_rels.append({
+                    "relationship_id": r.get("relationship_id") or _stable_rel_id_from_pair(pair),
+                    "characters_involved": pair,
+                    "type": r.get("relationship_change_type", ""),
+                })
+            curated_threats = []
+            threats_block = ms_data.get("major_threats_and_minor_side_threats", {})
+            if threats_block.get("major_threat"):
+                curated_threats.append({"name": threats_block["major_threat"], "type": "major"})
+            for t in threats_block.get("minor_side_threats", []):
+                curated_threats.append({"name": t, "type": "minor"})
+            curated_powers = [{
+                "character_id": p.get("profile_id", ""),
+                "name": p.get("character_name", ""),
+                "power": p.get("powers_and_abilities", {}).get("power_details", {}).get("power_name", "") if isinstance(p.get("powers_and_abilities"), dict) else "",
+            } for p in char_data.get("created_major_character_profiles", [])]
+            existing_threads = plot_data.get("plot_threads", {})
+            existing_main = existing_threads.get("main_plot_thread", {})
+            existing_char_arcs = existing_threads.get("character_arc_threads", [])
+            existing_rels_threads = existing_threads.get("relationship_threads", [])
+            existing_threats_threads = existing_threads.get("threat_threads", [])
+            existing_powers_threads = existing_threads.get("power_threads", [])
+            thread_context_msg = "\n\n=== THREAD GENERATION INSTRUCTIONS ===\n"
+            thread_context_msg += f"Available character IDs: {json.dumps(curated_chars, ensure_ascii=False)}\n"
+            thread_context_msg += f"Available relationship IDs: {json.dumps(curated_rels, ensure_ascii=False)}\n"
+            thread_context_msg += f"Available threats: {json.dumps(curated_threats, ensure_ascii=False)}\n"
+            thread_context_msg += f"Available powers: {json.dumps(curated_powers, ensure_ascii=False)}\n"
+            thread_context_msg += f"Existing character_arcs: {len(existing_char_arcs)}\n"
+            thread_context_msg += f"Existing relationship threads: {len(existing_rels_threads)}\n"
+            thread_context_msg += f"Existing threat threads: {len(existing_threats_threads)}\n"
+            thread_context_msg += f"Existing power threads: {len(existing_powers_threads)}\n"
+            thread_context_msg += "Use ONLY the character_ids, relationship_ids, and threat names listed above. Do NOT fabricate new IDs.\n"
+            thread_context_msg += "Keep each array concise: 1-4 items unless the context clearly requires more.\n"
+
+        # ---- Build cast/side identity instructions ----
+        identity_context_msg = ""
+        if page in ("cast", "side"):
+            char_data = context.get("characters", {})
+            ms_data = context.get("master_story", {})
+            major_profiles = char_data.get("created_major_character_profiles", [])
+            side_profiles = char_data.get("created_side_character_profiles", [])
+            hints = generation_hints or {}
+            existing_names = [p.get("character_name", "") for p in major_profiles if p.get("character_name")]
+            side_names = [p.get("character_name", "") for p in side_profiles if p.get("character_name")]
+            structure = ms_data.get("story_structure", {}).get("selected", "") if isinstance(ms_data.get("story_structure"), dict) else ""
+            editing_existing = bool(hints.get("edit_existing"))
+            current_profile_id = hints.get("profile_id") or partial_input.get("profile_id", "")
+            current_character_name = hints.get("character_name") or partial_input.get("character_name", "")
+            identity_context_msg = "\n\n=== CHARACTER GENERATION INSTRUCTIONS ===\n"
+            if editing_existing:
+                role = "MAJOR" if page == "cast" else "SIDE"
+                identity_context_msg += f"You are filling an EXISTING {role} character profile, not creating a new character.\n"
+                identity_context_msg += f"Target profile_id: {current_profile_id or 'unknown'}\n"
+                identity_context_msg += f"Target character_name: {current_character_name or 'unnamed'}\n"
+                identity_context_msg += "Keep this exact character identity. Do NOT rename them, replace them, duplicate them, or invent a different protagonist.\n"
+                identity_context_msg += "Use the existing partial_input fields as canon. Fill empty or weak fields so they fit the current story, world rules, factions, threats, plot outline, and relationships.\n"
+                identity_context_msg += "If a requested tab already has user-filled details, refine around those details instead of contradicting them.\n"
+                if page == "side":
+                    identity_context_msg += f"Major characters for context only: {', '.join(existing_names)}\n"
+            elif page == "cast":
+                identity_context_msg += f"You are generating a MAJOR character profile.\n"
+                identity_context_msg += f"Existing major characters ({len(major_profiles)}): {', '.join(existing_names)}\n"
+                identity_context_msg += f"Story structure: {structure}\n"
+                identity_context_msg += "Do NOT duplicate existing character names. Create a distinct character.\n"
+            else:
+                identity_context_msg += f"You are generating a SIDE character profile.\n"
+                identity_context_msg += f"Existing side characters ({len(side_profiles)}): {', '.join(side_names)}\n"
+                identity_context_msg += f"Major characters (reference, do not duplicate): {', '.join(existing_names)}\n"
+                identity_context_msg += "Side characters should support the story and major characters.\n"
+
+        # ---- Build court optimization ----
+        court_context_msg = ""
+        if page == "court":
+            ws = context.get("plot_workspace", {})
+            questions = ws.get("consequence_questions", [])
+            if questions:
+                court_context_msg = "\n\n=== CONSEQUENCE QUESTIONS ===\n"
+                court_context_msg += f"Answer these {len(questions)} questions:\n"
+                court_context_msg += json.dumps(questions, ensure_ascii=False)
+                court_context_msg += "\nSuggest the most logical answer for each based on story continuity.\n"
+
+        constraints_msg = ""
+        if user_constraints:
+            constraints_msg = "\nUser constraints:\n"
+            if user_constraints.get("user_intent_notes"):
+                constraints_msg += f"  Intent: {user_constraints['user_intent_notes']}\n"
+            if user_constraints.get("do_not_change_these_parts"):
+                constraints_msg += f"  Do NOT change: {user_constraints['do_not_change_these_parts']}\n"
+            if user_constraints.get("user_priority"):
+                constraints_msg += f"  Priority: {user_constraints['user_priority']}\n"
+        schema_hint = self._build_field_schema(page, target_fields)
+        compact_context = self._compact_generation_context(
+            page=page,
+            context=context,
+            generation_hints=generation_hints,
+        )
+        user_msg = (
+            f"Page: {page}\n"
+            f"Fields to generate: [{field_list}]\n"
+            f"Partial input already filled: {json.dumps(partial_input, ensure_ascii=False)}\n"
+            f"{constraints_msg}"
+            f"{arc_context_msg}{chapter_context_msg}{scene_context_msg}{thread_context_msg}{identity_context_msg}{court_context_msg}"
+            f"Current compact story context: {json.dumps(compact_context, ensure_ascii=False)}"
+            f"{schema_hint}"
+        )
+        logger.info("[LLM PROMPT] run_type=field_gen_%s compact_prompt_chars=%s", page, len(user_msg))
+
+        fallback = {"generated_fields": {}, "warnings": ["Deterministic fallback — AI not configured."]}
+        input_payload = {"task": "field_generation", "page": page, "target_fields": target_fields, "partial_input": partial_input}
+
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=workspace_id,
+            run_type=f"field_gen_{page}",
+            input_payload=input_payload,
+            system_prompt=system,
+            user_prompt=user_msg,
+            fallback=fallback,
+        )
+        out = result.output
+        generated = out.get("generated_fields", out) if isinstance(out, dict) else {}
+        warnings = out.get("warnings", [])
+        if not isinstance(generated, dict):
+            generated = {"_raw": str(generated)}
+        generated = self._normalize_generated_aliases(page=page, target_fields=target_fields, generated=generated)
+        if page == "scenes" and "scenes_for_chapter" in target_fields and not generated.get("scenes_for_chapter"):
+            warnings = [*warnings, "AI returned no scene cards. Retry in a minute or fill manually."]
+        if page == "scenes" and "scene_count_recommendations" in target_fields and not generated.get("scene_count_recommendations"):
+            warnings = [*warnings, "AI returned no scene-count recommendations. Retry in a minute or fill manually."]
+        if page == "threads":
+            generated = self._backfill_thread_ids(generated=generated, context=context)
+        return {"generated_fields": generated, "warnings": warnings}
+
+    def _backfill_thread_ids(self, *, generated: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        """Ensure plot_threads items carry stable IDs even when the LLM omits them.
+
+        The frontend's per-tab save (saveItemListThreads) silently drops items
+        whose id-field is empty, so a missing relationship_id / character_id /
+        threat_id_or_name = lost work. Fill them here from saved characters.json
+        and master_story.json by matching on names found in the item's text.
+        """
+        chars_data = context.get("characters", {}) if isinstance(context, dict) else {}
+        ms_data = context.get("master_story", {}) if isinstance(context, dict) else {}
+
+        # Build lookups: lowercase name → id, plus relationship slug → id.
+        major_profiles = chars_data.get("created_major_character_profiles", []) or []
+        char_by_name: dict[str, str] = {}
+        for p in major_profiles:
+            name = (p.get("character_name") or "").strip().lower()
+            cid = p.get("profile_id") or p.get("character_name") or ""
+            if name and cid:
+                char_by_name[name] = cid
+
+        rel_lookup: list[dict[str, str]] = []
+        for r in chars_data.get("character_relationship_map", {}).get("relationships", []) or []:
+            if not isinstance(r, dict):
+                continue
+            pair = r.get("characters_involved", "") or ""
+            parts = [p.strip() for p in pair.split("/") if p.strip()]
+            if len(parts) < 2:
+                continue
+            rid = r.get("relationship_id") or _stable_rel_id_from_pair(pair)
+            if not rid:
+                continue
+            rel_lookup.append({"id": rid, "a": parts[0].lower(), "b": parts[1].lower(), "pair": pair})
+
+        threats: list[str] = []
+        threats_block = ms_data.get("major_threats_and_minor_side_threats", {}) if isinstance(ms_data, dict) else {}
+        if threats_block.get("major_threat"):
+            threats.append(str(threats_block["major_threat"]))
+        threats.extend([str(t) for t in threats_block.get("minor_side_threats", []) if t])
+
+        def _flatten(*values: Any) -> str:
+            buf: list[str] = []
+            for v in values:
+                if isinstance(v, str):
+                    buf.append(v)
+                elif isinstance(v, list):
+                    buf.extend(str(x) for x in v if x)
+                elif v is not None:
+                    buf.append(str(v))
+            return " ".join(buf).lower()
+
+        def _find_char_id(blob: str) -> str:
+            for name, cid in char_by_name.items():
+                if name and name in blob:
+                    return cid
+            return ""
+
+        def _find_rel_id(blob: str, hint_pair: str = "") -> str:
+            if hint_pair:
+                hp = _stable_rel_id_from_pair(hint_pair)
+                if hp:
+                    return hp
+            for r in rel_lookup:
+                if r["a"] in blob and r["b"] in blob:
+                    return r["id"]
+            return ""
+
+        def _find_threat(blob: str) -> str:
+            for t in threats:
+                if t and t.lower() in blob:
+                    return t
+            return ""
+
+        # Relationship threads
+        rels = generated.get("relationship_threads") or generated.get("relationships")
+        if isinstance(rels, list):
+            for item in rels:
+                if not isinstance(item, dict) or item.get("relationship_id"):
+                    continue
+                hint_pair = item.get("characters_involved") or ""
+                if not hint_pair:
+                    a = item.get("from") or item.get("character_a") or ""
+                    b = item.get("to") or item.get("character_b") or ""
+                    if a and b:
+                        hint_pair = f"{a}/{b}"
+                blob = _flatten(item.get("start_dynamic"), item.get("breaking_point"), item.get("final_dynamic"), item.get("change_beats"), hint_pair)
+                rid = _find_rel_id(blob, hint_pair)
+                if rid:
+                    item["relationship_id"] = rid
+
+        # Character arc threads
+        char_arcs = generated.get("character_arc_threads") or generated.get("character_arcs")
+        if isinstance(char_arcs, list):
+            for item in char_arcs:
+                if not isinstance(item, dict) or item.get("character_id"):
+                    continue
+                blob = _flatten(item.get("starting_state"), item.get("lowest_point"), item.get("final_state"), item.get("growth_beats"))
+                cid = _find_char_id(blob)
+                if cid:
+                    item["character_id"] = cid
+
+        # Threat threads
+        threat_arr = generated.get("threat_threads") or generated.get("threats")
+        if isinstance(threat_arr, list):
+            for item in threat_arr:
+                if not isinstance(item, dict) or item.get("threat_id_or_name"):
+                    continue
+                blob = _flatten(item.get("first_hint"), item.get("reveal"), item.get("final_outcome"), item.get("escalation_beats"))
+                t = _find_threat(blob)
+                if t:
+                    item["threat_id_or_name"] = t
+
+        # Power threads
+        powers = generated.get("power_threads") or generated.get("powers")
+        if isinstance(powers, list):
+            for item in powers:
+                if not isinstance(item, dict) or item.get("character_id"):
+                    continue
+                blob = _flatten(item.get("power_name"), item.get("first_use"), item.get("breakthrough"), item.get("cost_or_consequence"), item.get("training_or_failure_beats"))
+                cid = _find_char_id(blob)
+                if cid:
+                    item["character_id"] = cid
+
+        return generated
+
+    def analyze_relationships(self, *, story_id: str, chapter_ids: list[str] | None = None) -> dict[str, Any]:
+        """Analyze story chapters and arcs to propose relationship map updates."""
+        registry = self.registry
+        context: dict = {}
+        char_rec = registry.get_current_file(story_id, "characters")
+        plot_rec = registry.get_current_file(story_id, "plot_outline")
+        if char_rec:
+            char_data = char_rec.get("json_copy", {})
+            profiles = char_data.get("created_major_character_profiles", [])
+            context["characters"] = [{
+                "name": p.get("character_name", ""),
+                "role": p.get("character_role_level", {}).get("selected", "") if isinstance(p.get("character_role_level"), dict) else p.get("character_role_level", ""),
+                "faction": p.get("main_character_faction_alignment", {}).get("alignment_details", {}).get("linked_master_faction", ""),
+                "personality": ", ".join(p.get("character_personality", {}).get("personality_details", {}).get("core_traits", []) if isinstance(p.get("character_personality"), dict) else [])[:200],
+            } for p in profiles]
+            existing_rels = []
+            for r in char_data.get("character_relationship_map", {}).get("relationships", []):
+                existing_rels.append({
+                    "characters_involved": r.get("characters_involved", ""),
+                    "relationship_change_type": r.get("relationship_change_type", ""),
+                    "reason": r.get("reason", ""),
+                })
+            context["existing_relationships"] = existing_rels
+        if plot_rec:
+            plot_data = plot_rec.get("json_copy", {})
+            arc = plot_data.get("story_arc_overview", {})
+            context["arc"] = {
+                "arc_title": arc.get("arc_title", ""),
+                "arc_summary": arc.get("arc_summary", ""),
+                "main_conflicts": f"external:{arc.get('main_external_conflict','')} internal:{arc.get('main_internal_conflict','')} relationship:{arc.get('main_relationship_conflict','')}",
+                "relationships_used": arc.get("relationships_used", []),
+            }
+            all_chapters = plot_data.get("chapter_or_episode_list", {}).get("chapters", [])
+            target_chapters = all_chapters
+            if chapter_ids:
+                target_chapters = [ch for ch in all_chapters if ch.get("chapter_id") in chapter_ids]
+            context["chapters"] = [{
+                "chapter_id": ch.get("chapter_id", ""),
+                "arc_title": ch.get("arc_title", ""),
+                "title": ch.get("chapter_title", ""),
+                "summary": ch.get("summary", ""),
+                "characters_present": ch.get("characters_present", []),
+                "main_conflict": ch.get("main_conflict", ""),
+                "emotional_beat": ch.get("emotional_beat", ""),
+                "ending_cliffhanger": ch.get("ending_cliffhanger", ""),
+            } for ch in target_chapters]
+        system_prompt = (
+            "You are the Manga Maker relationship analyst. "
+            "Analyze the story context (characters, chapters, arc, existing relationships) and propose relationship map updates as JSON. "
+            "For each character pair that interacts meaningfully in the chapters, create a relationship entry. "
+            "Relationship change types: enemy, rival, friend, ally, family, mentor, love, secret, faction, neutral. "
+            "characters_involved format: \"Character A/Character B\" (split by /). "
+            "Provide a specific reason referencing the chapter events. "
+            "NEVER include a relationship for a character with themselves. "
+            "Return JSON: { \"proposed_relationships\": [{ \"characters_involved\": \"...\", \"relationship_change_type\": \"...\", \"reason\": \"...\", \"relationship_event_source\": \"chapter:ch_001\" }] }"
+        )
+        user_msg = (
+            "Analyze these chapters and propose relationship map updates.\n"
+            f"Chapters to analyze: {len(context.get('chapters', []))}\n"
+            f"Story arc: {json.dumps(context.get('arc', {}), ensure_ascii=False)}\n"
+            f"Characters: {json.dumps(context.get('characters', []), ensure_ascii=False)}\n"
+            f"Chapters: {json.dumps(context.get('chapters', []), ensure_ascii=False)}\n"
+            f"Existing relationships: {json.dumps(context.get('existing_relationships', []), ensure_ascii=False)}"
+        )
+        fallback = {"proposed_relationships": [], "warnings": ["Deterministic fallback — AI not configured."]}
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=None,
+            run_type="relationship_analysis",
+            input_payload={"chapter_ids": chapter_ids, "arc": context.get("arc", {})},
+            system_prompt=system_prompt,
+            user_prompt=user_msg,
+            fallback=fallback,
+        )
+        out = result.output
+        proposed = out.get("proposed_relationships", []) if isinstance(out, dict) else []
+        warnings = out.get("warnings", [])
+        return {"proposed_relationships": proposed, "warnings": warnings}
+
+    def check_arc_narrative_completion(
+        self,
+        *,
+        story_id: str,
+        arc_overview: dict[str, Any],
+        arc_chapters: list[dict[str, Any]],
+        structural: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Layer 2 of the arc-completion check: ask the LLM whether the arc's
+        narrative is actually told (not just whether all sections are tagged).
+
+        Returns dict with: narrative_complete (bool|None), narrative_reason,
+        missing_beats[], suggestion, confidence, llm_used.
+
+        When the LLM is unavailable, narrative_complete is set to None so the
+        caller can fall back to the structural verdict alone.
+        """
+        # Trim chapters to a compact payload — only the fields that matter for
+        # narrative judgment. Keeps prompt cost low.
+        compact_chapters = [
+            {
+                "chapter_id": c.get("chapter_id"),
+                "chapter_number": c.get("chapter_number"),
+                "chapter_title": c.get("chapter_title"),
+                "structure_section": c.get("structure_section"),
+                "summary": c.get("summary"),
+                "main_conflict": c.get("main_conflict"),
+                "emotional_beat": c.get("emotional_beat"),
+                "twist_or_hook": c.get("twist_or_hook"),
+                "ending_cliffhanger": c.get("ending_cliffhanger"),
+            }
+            for c in arc_chapters
+        ]
+
+        fallback = {
+            "narrative_complete": None,
+            "narrative_reason": "",
+            "missing_beats": [],
+            "suggestion": "new_arc" if structural.get("structural_complete") else "extend_arc",
+            "confidence": None,
+            "llm_used": False,
+        }
+
+        if not self.settings.llm_enabled:
+            return fallback
+
+        system_prompt = (
+            "You judge whether a manga story arc is narratively complete. "
+            "Given the arc's overview (goals, conflicts, ending target) and the chapters written so far, decide if the arc's main story question and conflicts have a satisfying payoff in those chapters. "
+            "Be strict: a structurally tagged arc can still be narratively unfinished if a major beat (climax, payoff, resolution) is missing. "
+            "Return JSON only with keys: narrative_complete (boolean), narrative_reason (1–2 sentences), missing_beats (array of short strings naming each missing beat), suggestion (\"new_arc\" if complete, \"extend_arc\" if not), confidence (number between 0 and 1)."
+        )
+        user_msg = json.dumps({
+            "arc_overview": arc_overview,
+            "structural_status": {
+                "structure_type": structural.get("structure_type"),
+                "sections_required": structural.get("sections_required_labels") or structural.get("sections_required"),
+                "sections_covered": structural.get("sections_covered"),
+                "sections_missing": structural.get("sections_missing"),
+                "chapter_count": structural.get("chapter_count"),
+                "structural_complete": structural.get("structural_complete"),
+            },
+            "chapters": compact_chapters,
+        }, ensure_ascii=False)
+
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=None,
+            run_type="arc_completion_check",
+            input_payload={"arc_title": arc_overview.get("arc_title", ""), "chapter_count": len(compact_chapters)},
+            system_prompt=system_prompt,
+            user_prompt=user_msg,
+            fallback={"narrative_complete": None, "missing_beats": [], "narrative_reason": "", "suggestion": "extend_arc", "confidence": None},
+        )
+        out = result.output if isinstance(result.output, dict) else {}
+        narrative_complete = out.get("narrative_complete")
+        if not isinstance(narrative_complete, bool):
+            narrative_complete = None
+        return {
+            "narrative_complete": narrative_complete,
+            "narrative_reason": (out.get("narrative_reason") or "").strip(),
+            "missing_beats": out.get("missing_beats") or [],
+            "suggestion": out.get("suggestion") or ("new_arc" if narrative_complete else "extend_arc"),
+            "confidence": out.get("confidence"),
+            "llm_used": not result.used_fallback,
+        }

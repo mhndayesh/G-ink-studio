@@ -2,6 +2,39 @@
 
 Notable changes. Newest first.
 
+## Unreleased — `main`
+
+- **Doc cleanup.** Deleted stale/story-specific docs (`REPO-CRITIQUE.md`, `BUNDLE-AUDIT.md`,
+  `EXPORT-TOOL-REQUIREMENTS.md`, `ASSET-FORMAT-SPEC.md`, `SIMPLE-FLOW-PROPOSAL.md`,
+  `ai-field-schema.md`, `apps/web/docs/API_ENDPOINTS_USED.md`, entire `QA/` folder).
+  Updated `docs/backend-guide.md`, `docs/frontend-guide.md`, `docs/architecture.md`,
+  `apps/api/README.md` with accurate endpoint counts, run commands (port 8080, no
+  `--reload`), and all missing screens/endpoints added since the original pass.
+
+- **Export ZIP fix** (`apps/api/app/api/v1/export.py`): `export_visuals_bundle` raised
+  `UnboundLocalError: name 'safe_title' referenced before assignment`. Fixed by using
+  `story_safe_title(files)` (the same pattern as all other export endpoints) instead of
+  a partial manual title extraction that never assigned `safe_title`.
+
+- **Auto-generate side cast dedup — three-layer fix:**
+  - *Gap 1* (`characters.py`): replaced exact `name.lower() in existing_names` filter
+    with `_name_collides()` — fuzzy matching (exact, substring, first-token) blocks
+    major character name variants like "Kinji Matsuda" when "Kinji" is a major character.
+  - *Gap 2* (`llm_service.py`): added guard so the singular "You are generating a SIDE
+    character profile" framing is skipped when generating the full `auto_side_cast` array,
+    preventing the conflicting singular instruction that confused weak models.
+  - *Gap 3* (`llm_context.py`): when `generation_hints.auto_generate=True`, major
+    character refs are reduced to `{id, name}` only — no `role/faction/arc` — so the
+    LLM cannot copy major character details into the generated side profiles.
+
+- **Side character Story Role & Fate** (`apps/api/app/services/llm_prompts.py`,
+  `llm_service.py`; `apps/web/app/studio/[storyId]/side/page.tsx`): Added a new
+  `story_role` block to side character profiles — `story_function`, `relationship_to_protagonist`,
+  `narrative_fate`, `story_impact`. AI-generatable via the Side Cast AI panel. Rendered
+  in the edit form as option-button grids + free-text fields. Profile list cards show
+  violet/rose pills for function and fate. Fixed missing `"side"` key in `system_prompts`
+  (previously fell back to the `"seed"` system prompt).
+
 ## Unreleased — `cleanup/repo-hygiene` branch
 
 Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and

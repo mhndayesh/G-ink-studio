@@ -2,16 +2,15 @@
 
 ## Quick Start
 
-```bash
-cd apps/api
+```powershell
+cd apps\api
 python -m venv .venv
-.venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 copy .env.example .env
-uvicorn app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080
 ```
 
-## Complete Endpoint Map (62 endpoints, 16 routers)
+## Complete Endpoint Map (17 routers)
 
 ### health.py
 | Method | Path | Handler |
@@ -47,8 +46,15 @@ uvicorn app.main:app --reload --port 8000
 | POST | `/api/v1/stories/{story_id}/characters/validate` | `validate_characters()` |
 | PATCH | `/api/v1/stories/{story_id}/characters/structure` | `update_structure()` |
 | POST | `/api/v1/stories/{story_id}/characters/profiles` | `create_profile()` |
+| PATCH | `/api/v1/stories/{story_id}/characters/profiles/{profile_id}` | `update_profile()` |
+| DELETE | `/api/v1/stories/{story_id}/characters/profiles/{profile_id}` | `delete_profile()` |
 | POST | `/api/v1/stories/{story_id}/characters/side-profiles` | `create_side_profile()` |
+| PATCH | `/api/v1/stories/{story_id}/characters/side-profiles/{profile_id}` | `update_side_profile()` |
+| DELETE | `/api/v1/stories/{story_id}/characters/side-profiles/{profile_id}` | `delete_side_profile()` |
+| GET | `/api/v1/stories/{story_id}/characters/check-conflicts` | `check_conflicts()` |
 | POST | `/api/v1/stories/{story_id}/characters/relationship-map/activate` | `activate_relationship_map()` |
+| POST | `/api/v1/stories/{story_id}/characters/auto-generate-side` | `auto_generate_side()` |
+| POST | `/api/v1/stories/{story_id}/characters/sync-script-speakers` | `sync_script_speakers()` |
 
 ### plot_outline.py
 | Method | Path | Handler |
@@ -94,11 +100,37 @@ uvicorn app.main:app --reload --port 8000
 | Method | Path | Handler |
 |--------|------|---------|
 | GET | `/api/v1/stories/{story_id}/chapter-script` | `get_script()` |
+| GET | `/api/v1/stories/{story_id}/chapter-script/chapters-status` | `chapters_status()` |
+| POST | `/api/v1/stories/{story_id}/chapter-script/load` | `load_script()` |
 | POST | `/api/v1/stories/{story_id}/chapter-script/validate` | `validate_script()` |
 | POST | `/api/v1/stories/{story_id}/chapter-script/generate` | `generate_script()` |
 | PATCH | `/api/v1/stories/{story_id}/chapter-script` | `patch_script()` |
 | POST | `/api/v1/stories/{story_id}/chapter-script/extract-events` | `extract_events()` |
+| POST | `/api/v1/stories/{story_id}/chapter-script/generate-batch` | `generate_batch()` |
+| POST | `/api/v1/stories/{story_id}/chapter-script/fill-visuals-batch-all` | `fill_visuals_batch_all()` |
 | POST | `/api/v1/stories/{story_id}/chapter-script/approve` | `approve_script()` |
+
+### locations.py
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/v1/stories/{story_id}/locations` | `list_locations()` |
+| POST | `/api/v1/stories/{story_id}/locations` | `create_location()` |
+| GET | `/api/v1/stories/{story_id}/locations/{location_id}` | `get_location()` |
+| PATCH | `/api/v1/stories/{story_id}/locations/{location_id}` | `update_location()` |
+| DELETE | `/api/v1/stories/{story_id}/locations/{location_id}` | `delete_location()` |
+| POST | `/api/v1/stories/{story_id}/locations/{location_id}/ai-fill` | `ai_fill_location()` |
+| POST | `/api/v1/stories/{story_id}/locations/ai-generate-all` | `ai_generate_all_locations()` |
+
+### export.py
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/v1/stories/{story_id}/export/story` | `export_story()` |
+| GET | `/api/v1/stories/{story_id}/export/scenes` | `export_scenes()` |
+| GET | `/api/v1/stories/{story_id}/export/visuals` | `export_visuals()` |
+| GET | `/api/v1/stories/{story_id}/export/visuals-bundle` | `export_visuals_bundle()` |
+| GET | `/api/v1/stories/{story_id}/export/validate` | `export_validate()` |
+| GET | `/api/v1/stories/{story_id}/export/triple-zip` | `export_triple_zip()` |
+| GET | `/api/v1/stories/{story_id}/export/raw-zip` | `export_raw_zip()` |
 
 ### continuity.py
 | Method | Path | Handler |
@@ -235,4 +267,4 @@ cd apps/api
 python tests/smoke_test.py
 ```
 
-Expected: `"passed": true` (73 checks across all services).
+Expected: `"passed": true`.

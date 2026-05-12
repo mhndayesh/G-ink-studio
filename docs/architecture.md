@@ -47,7 +47,7 @@ All files maintain `story_id`, `version_id`, `file_type`, `state_type` invariant
 
 ---
 
-## 12 Backend Services
+## Backend Services
 
 | Service | Responsibility |
 |---------|----------------|
@@ -115,18 +115,22 @@ Next.js App Router
        ├── cast       → major character profiles
        ├── side       → side character profiles
        ├── web        → relationship graph (force-directed)
-       ├── board      → plot board (arc, chapters, structure)
-       ├── scenes     → scene cards
-       ├── threads    → plot threads (character arcs, threats, powers)
-       ├── desk       → writing desk (free writing, AI)
-       ├── court      → consequence court (questions, approve)
-       ├── script     → manga script studio
-       ├── timeline   → memory timeline (versions)
-       ├── radar      → continuity radar
-       └── control    → control room (raw API access)
+       ├── board           → plot board (arc, chapters, structure)
+       ├── scenes          → scene cards
+       ├── threads         → plot threads (character arcs, threats, powers)
+       ├── locations       → location CRUD + AI-fill
+       ├── faction-visuals → faction visual signatures
+       ├── desk            → writing desk (free writing, AI)
+       ├── court           → consequence court (questions, approve)
+       ├── script          → manga script studio
+       ├── visuals-studio  → visual descriptions per panel
+       ├── export          → export (story, visuals, scenes, ZIPs)
+       ├── timeline        → memory timeline (versions)
+       ├── radar           → continuity radar
+       └── control         → control room (raw API access)
 ```
 
-15 screens grouped into 6 stages: **Foundation**, **Characters**, **Plot**, **Write**, **Produce**, **Review**.
+19 screens grouped into 6 stages: **Foundation**, **Characters**, **Plot**, **Write**, **Produce**, **Review**.
 
 ---
 
@@ -163,8 +167,8 @@ Backend runs without Neo4j, Qdrant, or LLM. Disable individually via `.env`:
 | FastAPI entrypoint | `apps/api/app/main.py` |
 | Dependency injection | `apps/api/app/main_dependencies.py` |
 | Pydantic models | `apps/api/app/models/` |
-| Business logic (15 services) | `apps/api/app/services/` |
-| REST endpoints (16 routers) | `apps/api/app/api/v1/` |
+| Business logic | `apps/api/app/services/` |
+| REST endpoints (17 routers) | `apps/api/app/api/v1/` |
 | DB connections | `apps/api/app/db/postgres.py` |
 | Auth logic | `apps/api/app/core/auth.py` |
 | SQL migrations | `apps/api/migrations/versions/` |

@@ -14,33 +14,35 @@
 
 ---
 
-## 15 Studio Screens
+## 19 Studio Screens
 
 All routes live under `/studio/[storyId]/`.
 
-### Foundation Stage (4 screens)
+### Foundation Stage (3 screens)
 
 | Screen | Route | File Key | Description |
 |--------|-------|----------|-------------|
-| **Studio Home** | `/home` | `status` | Stage-grouped dashboard with all 15 phases, backend status, files |
+| **Studio Home** | `/home` | `status` | Stage-grouped dashboard with all phases, backend status, files |
 | **Story Seed** | `/seed` | `master_story.json` | Title, idea, genre (multi-select), ending direction, story foundation |
 | **World Core** | `/world` | `master_story.json` | World type, world rules (multi-select + custom), 10 rule detail fields, major factions (per-faction expandos), major+minor threats, 6 threat detail fields |
 
-### Characters Stage (3 screens)
+### Characters Stage (4 screens)
 
 | Screen | Route | File Key | Description |
 |--------|-------|----------|-------------|
 | **Cast Forge** | `/cast` | `characters.json` | Main character structure (option selector), profile queue, major profile creation via `ProfileTabs` (7 tabs, 150+ fields), AI Fill panel, relationship map activation |
-| **Side Cast** | `/side` | `characters.json` | List existing side characters, create/edit with `ProfileTabs`, auto-generated `side_XXX` IDs |
+| **Side Cast** | `/side` | `characters.json` | List/create/edit side characters. AI Fill panel. Auto-generate full side cast from story context. Story Role & Fate section per character. |
 | **Relationship Web** | `/web` | `characters.json` | **Locked** until 2+ major profiles exist. Force-directed graph via `react-force-graph-2d`. Click-to-select node details. Edge colors by relationship type. |
+| **Faction Visuals** | `/faction-visuals` | `master_story.json` | Visual signatures per faction — positive/negative AI image prompts, style notes. |
 
-### Plot Stage (3 screens)
+### Plot Stage (4 screens)
 
 | Screen | Route | File Key | Description |
 |--------|-------|----------|-------------|
 | **Plot Board** | `/board` | `plot_outline.json` | Narrative structure selector (Kishotenketsu/Three-Act/Hero's Journey/Custom), arc overview fields, structure editors (detailed sections per act), AI Fill panel, chapter creation modal with cross-reference selectors |
 | **Scene Cards** | `/scenes` | `plot_outline.json` | Scene cards grouped by chapter. Each scene: location, time, characters (multi-select), goal, conflict, relationship dynamic, visual moment, panel mood, ending beat. Modal create/edit. |
 | **Plot Threads** | `/threads` | `plot_outline.json` | 5-tab interface: Main Thread, Character Arcs, Relationships, Threats, Powers. Dynamic add/remove lists with detail fields per item. |
+| **Locations** | `/locations` | `plot_outline.json` | Location CRUD. Each location: name, type, description, positive/negative AI image prompts. AI-fill individual locations or generate all. |
 
 ### Write Stage (2 screens)
 
@@ -49,11 +51,14 @@ All routes live under `/studio/[storyId]/`.
 | **Writing Desk** | `/desk` | `plot_workspace.json` | Free writing textarea with: input type selector (7 options), AI expansion priority (5 modes), intent notes, protected sections list. AI expand with accept/discard. Consequence detect button. Shows AI preview + questions. |
 | **Consequence Court** | `/court` | `plot_workspace.json` | Consequence questions from analysis, Yes/No/Custom answer buttons per question. AI suggest-answers. Final approve button → creates v002 bundle (events + patches + version + sync). |
 
-### Produce Stage (1 screen)
+### Produce Stage (4 screens)
 
 | Screen | Route | File Key | Description |
 |--------|-------|----------|-------------|
-| **Manga Script** | `/script` | `chapter_script.json` | Chapter metadata, pages/panels with edit mode toggle. Panel: size selector (7 options), camera shot (13 options), pacing, visual description, character action, dialogue lines (speaker + text), SFX. Inline editing. |
+| **Manga Script** | `/script` | `chapter_script.json` | Chapter metadata, pages/panels with edit mode toggle. Panel: size selector (7 options), camera shot (13 options), pacing, visual description, character action, dialogue lines (speaker + text), SFX. Inline editing. Batch generate. |
+| **Visuals Studio** | `/visuals-studio` | `chapter_script.json` | Visual description editor per panel. Batch-fill visuals across all chapters. AI prompt preview. |
+| **Writing Desk** | `/desk` | `plot_workspace.json` | See Write stage — also accessible from Produce nav. |
+| **Export** | `/export` | all files | Download story/scenes/visuals as `.md`/`.txt`/`.docx`. Visuals production bundle (ZIP). G-Ink Studio triple-zip. Raw JSON zip. Data-quality validation report. |
 
 ### Review Stage (3 screens)
 
@@ -69,10 +74,10 @@ All routes live under `/studio/[storyId]/`.
 
 ```typescript
 stage: "foundation"  → home, seed, world
-stage: "characters"  → cast, side, web
-stage: "plot"        → board, scenes, threads
+stage: "characters"  → cast, side, web, faction-visuals
+stage: "plot"        → board, scenes, threads, locations
 stage: "write"       → desk, court
-stage: "produce"     → script
+stage: "produce"     → script, visuals-studio, desk, export
 stage: "review"      → timeline, radar, control
 ```
 
@@ -107,7 +112,7 @@ Navigation bar in `StudioShell` shows colored stage labels:
 
 ## API Client (lib/api.ts)
 
-39 methods mapping 1:1 to backend routes. Base URL from `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000/api/v1`).
+Methods mapping 1:1 to backend routes. Base URL from `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8080/api/v1`).
 
 Key methods:
 ```typescript

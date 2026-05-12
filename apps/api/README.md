@@ -46,12 +46,37 @@ PATCH /api/v1/stories/{story_id}/master-story/template
 POST  /api/v1/stories/{story_id}/master-story/validate
 
 ### characters
-GET   /api/v1/stories/{story_id}/characters
-POST  /api/v1/stories/{story_id}/characters/validate
-PATCH /api/v1/stories/{story_id}/characters/structure
-POST  /api/v1/stories/{story_id}/characters/profiles
-POST  /api/v1/stories/{story_id}/characters/side-profiles
-POST  /api/v1/stories/{story_id}/characters/relationship-map/activate
+GET    /api/v1/stories/{story_id}/characters
+POST   /api/v1/stories/{story_id}/characters/validate
+PATCH  /api/v1/stories/{story_id}/characters/structure
+POST   /api/v1/stories/{story_id}/characters/profiles
+PATCH  /api/v1/stories/{story_id}/characters/profiles/{profile_id}
+DELETE /api/v1/stories/{story_id}/characters/profiles/{profile_id}
+POST   /api/v1/stories/{story_id}/characters/side-profiles
+PATCH  /api/v1/stories/{story_id}/characters/side-profiles/{profile_id}
+DELETE /api/v1/stories/{story_id}/characters/side-profiles/{profile_id}
+GET    /api/v1/stories/{story_id}/characters/check-conflicts
+POST   /api/v1/stories/{story_id}/characters/relationship-map/activate
+POST   /api/v1/stories/{story_id}/characters/auto-generate-side
+POST   /api/v1/stories/{story_id}/characters/sync-script-speakers
+
+### locations
+GET    /api/v1/stories/{story_id}/locations
+POST   /api/v1/stories/{story_id}/locations
+GET    /api/v1/stories/{story_id}/locations/{location_id}
+PATCH  /api/v1/stories/{story_id}/locations/{location_id}
+DELETE /api/v1/stories/{story_id}/locations/{location_id}
+POST   /api/v1/stories/{story_id}/locations/{location_id}/ai-fill
+POST   /api/v1/stories/{story_id}/locations/ai-generate-all
+
+### export
+GET  /api/v1/stories/{story_id}/export/story
+GET  /api/v1/stories/{story_id}/export/scenes
+GET  /api/v1/stories/{story_id}/export/visuals
+GET  /api/v1/stories/{story_id}/export/visuals-bundle
+GET  /api/v1/stories/{story_id}/export/validate
+GET  /api/v1/stories/{story_id}/export/triple-zip
+GET  /api/v1/stories/{story_id}/export/raw-zip
 
 ### plot-outline
 GET   /api/v1/stories/{story_id}/plot-outline
@@ -87,10 +112,14 @@ POST  /api/v1/stories/{story_id}/versions/{version_id}/mark-official
 
 ### chapter-script
 GET   /api/v1/stories/{story_id}/chapter-script
+GET   /api/v1/stories/{story_id}/chapter-script/chapters-status
+POST  /api/v1/stories/{story_id}/chapter-script/load
 POST  /api/v1/stories/{story_id}/chapter-script/validate
 POST  /api/v1/stories/{story_id}/chapter-script/generate
 PATCH /api/v1/stories/{story_id}/chapter-script
 POST  /api/v1/stories/{story_id}/chapter-script/extract-events
+POST  /api/v1/stories/{story_id}/chapter-script/generate-batch
+POST  /api/v1/stories/{story_id}/chapter-script/fill-visuals-batch-all
 POST  /api/v1/stories/{story_id}/chapter-script/approve
 
 ### continuity
@@ -123,23 +152,13 @@ GET   /api/v1/stories/{story_id}/ai/references
 
 ---
 
-## Key New Endpoints (v1.3)
-
-- `POST /characters/side-profiles` — Create side character with auto-ID
-- `GET /graph/web` — Merged character graph from JSON data
-- `POST /ai/generate` — Field-level AI generation across all pages
-- `GET /ai/references` — Cross-page reference data (characters, factions, threats, chapters)
-- Version auto-creation on approve (no separate step needed)
-
----
-
 ## Run smoke test
 
 ```bash
 python tests/smoke_test.py
 ```
 
-Expected: `"passed": true` (73 checks)
+Expected: `"passed": true`
 
 ---
 

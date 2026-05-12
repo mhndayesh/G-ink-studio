@@ -35,9 +35,12 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
     `apps/api/app/services/script_patch.py`. (`master_story_service.py` and
     `plot_outline_service.py` have their own *non-identical* `_apply_patch` copies —
     converging those is a follow-up.)
-  - `apps/web/app/studio/[storyId]/board/page.tsx` (1295→1226): React-free constants
-    + helpers → `./boardModel.ts`. (Deeper split of the per-section sub-form state and
-    the `any` cleanup still TODO.)
+  - `apps/web/app/studio/[storyId]/board/page.tsx` (1295→990): React-free constants
+    + helpers → `./boardModel.ts` (+ `boardModel.test.ts`); the three modal/dialog
+    blocks → `./BoardModals.tsx` (`ChapterModal`, `RedoArcModal`, `DeleteChapterDialog`);
+    the narrative-structure beat editors → `./StructureEditors.tsx`; the chapter/arc
+    forms are now typed (`ChapterForm` / `ArcForm`). (`content`/`refData`/AI-callback
+    `any`s and a state-into-hooks split still TODO.)
 - **Tests:** added a `pytest` suite (`apps/api/tests/`) — `pyproject.toml` config,
   unit tests for `visual_prompt`, `content_inspector`, `script_patch`, `thread_ids`,
   and `export_service` helpers, plus `tests/test_smoke.py` running the e2e workflow

@@ -35,6 +35,12 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
     `apps/api/app/services/script_patch.py`. (`master_story_service.py` and
     `plot_outline_service.py` have their own *non-identical* `_apply_patch` copies —
     converging those is a follow-up.)
+  - `export_service.py` (1592→880): split into a facade + `apps/api/app/services/export_shared.py`
+    (low-level coercers / title helpers / lines→text·md·docx / file loaders),
+    `export_validation.py` (`_validate_export` / `_format_validation_lines`), and
+    `export_character_files.py` (per-character sheet lines / prompt files / panels.csv /
+    `_profile_role` / `_profile_bio`); `export_service.py` re-exports everything the router
+    needs, so `apps/api/app/api/v1/export.py` is unchanged.
   - `apps/web/app/studio/[storyId]/board/page.tsx` (1295→990): React-free constants
     + helpers → `./boardModel.ts` (+ `boardModel.test.ts`); the three modal/dialog
     blocks → `./BoardModals.tsx` (`ChapterModal`, `RedoArcModal`, `DeleteChapterDialog`);
@@ -43,8 +49,8 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
     `any`s and a state-into-hooks split still TODO.)
 - **Tests:** added a `pytest` suite (`apps/api/tests/`) — `pyproject.toml` config,
   unit tests for `visual_prompt`, `content_inspector`, `script_patch`, `thread_ids`,
-  and `export_service` helpers, plus `tests/test_smoke.py` running the e2e workflow
-  under pytest. `36 passed`. CI backend job now runs `python -m pytest`.
+  `llm_context`, `export_service`, `export_shared`, plus `tests/test_smoke.py` running
+  the e2e workflow under pytest. **49 passed.** CI backend job runs `python -m pytest`.
 - **Frontend now lints clean and builds.** Fixed the one `eslint` *error*
   (`react/no-unescaped-entities` in `side/page.tsx`), all the pre-existing
   unused-var/exhaustive-deps warnings, and a pre-existing `next build` failure in

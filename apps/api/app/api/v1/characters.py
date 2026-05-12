@@ -210,6 +210,22 @@ def auto_generate_side_cast(
         for p in profiles
         if p.get("character_name")
     }
+    # Pre-split existing names into first-name tokens for fuzzy blocking
+    existing_first_tokens: set[str] = {n.split()[0] for n in existing_names if n.split()}
+
+    def _name_collides(candidate: str) -> bool:
+        low = candidate.lower()
+        if low in existing_names:
+            return True
+        # Block if candidate is a substring of any existing name or vice-versa
+        for ex in existing_names:
+            if low in ex or ex in low:
+                return True
+        # Block if first token matches any existing first token (catches "Kinji" vs "Kinji Matsuda")
+        first = low.split()[0] if low.split() else ""
+        if first and first in existing_first_tokens:
+            return True
+        return False
 
     created: list[str] = []
     skipped: list[str] = []
@@ -219,7 +235,7 @@ def auto_generate_side_cast(
         name = (char.get("character_name") or "").strip()
         if not name:
             continue
-        if name.lower() in existing_names:
+        if _name_collides(name):
             skipped.append(name)
             continue
         profile_data = {k: v for k, v in char.items() if k != "character_name"}

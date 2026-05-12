@@ -1102,7 +1102,9 @@ class LLMService:
 
         # ---- Build cast/side identity instructions ----
         identity_context_msg = ""
-        if page in ("cast", "side"):
+        # Skip single-profile framing when generating the full auto side cast array —
+        # the dedicated auto_gen_context_msg block below provides correct instructions.
+        if page in ("cast", "side") and not (page == "side" and "auto_side_cast" in target_fields):
             char_data = context.get("characters", {})
             ms_data = context.get("master_story", {})
             major_profiles = char_data.get("created_major_character_profiles", [])

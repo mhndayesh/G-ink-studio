@@ -34,16 +34,22 @@ def compact_generation_context(
 
     major_profiles = chars.get("created_major_character_profiles", []) or []
     side_profiles = chars.get("created_side_character_profiles", []) or []
-    character_refs = [
-        {
-            "id": p.get("profile_id", ""),
-            "name": p.get("character_name", ""),
-            "role": clip_text(p.get("character_role_level", ""), 120),
-            "faction": clip_text(p.get("main_character_faction_alignment", ""), 180),
-            "arc": clip_text(p.get("character_arc_and_threat_connection", p.get("arc", "")), 240),
-        }
-        for p in major_profiles[:20]
-    ]
+    # For auto side cast generation, send major character names only — no role/faction/arc —
+    # to prevent weak models from copying major character details into the generated side profiles.
+    _auto_generate = page == "side" and bool((generation_hints or {}).get("auto_generate"))
+    if _auto_generate:
+        character_refs = [{"id": p.get("profile_id", ""), "name": p.get("character_name", "")} for p in major_profiles[:20]]
+    else:
+        character_refs = [
+            {
+                "id": p.get("profile_id", ""),
+                "name": p.get("character_name", ""),
+                "role": clip_text(p.get("character_role_level", ""), 120),
+                "faction": clip_text(p.get("main_character_faction_alignment", ""), 180),
+                "arc": clip_text(p.get("character_arc_and_threat_connection", p.get("arc", "")), 240),
+            }
+            for p in major_profiles[:20]
+        ]
     side_refs = [{"id": p.get("profile_id", ""), "name": p.get("character_name", "")} for p in side_profiles[:20]]
 
     chapters = plot.get("chapter_or_episode_list", {}).get("chapters", []) or []

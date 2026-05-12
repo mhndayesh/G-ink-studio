@@ -26,7 +26,6 @@ from app.services.export_service import (
     _lines_to_markdown,
     _lines_to_text,
     _panels_csv,
-    _safe,
     _validate_export,
 )
 
@@ -135,11 +134,7 @@ def export_visuals_bundle(
     """
     files = _get_all_files(story_id, registry)
     characters = files.get("characters", {}) or {}
-    title = _safe(
-        (files.get("master_story", {}) or {}).get("title")
-        or (files.get("master_story", {}) or {}).get("story_title"),
-        "story",
-    )
+    title, safe_title = story_safe_title(files)
     safe_title = safe_title or story_id
     all_scripts = _all_chapter_scripts(story_id, registry)
 

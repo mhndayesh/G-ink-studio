@@ -22,12 +22,18 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
   note for 3+ (#3); character & location AI prompts rebuilt clean (#4/#6); object-only
   panels drop the "Expression: N/A …" line (#8); `export/validate` flags source prompts
   that still carry colour/lighting/style noise.
-- **Refactors:** `apps/api/app/api/v1/export.py` (~1690-line router) split — the
-  ~45 rendering helpers moved to `apps/api/app/services/export_service.py`; the
-  router is now ~265 lines. Shared "is this chapter/scene/page non-empty?" predicates
-  (duplicated in `StoryService` and `ChapterScriptService`) moved to
-  `apps/api/app/services/content_inspector.py` (`chapter_script_service.py`
-  1783→1685, `story_service.py` 369→280). Behavior unchanged.
+- **Refactors** (all behavior-preserving, smoke-test verified):
+  - `apps/api/app/api/v1/export.py` (~1690-line router) → router (~265 lines) +
+    `apps/api/app/services/export_service.py` (the ~45 rendering helpers).
+  - Shared "is this chapter/scene/page non-empty?" predicates (duplicated in
+    `StoryService` and `ChapterScriptService`) → `apps/api/app/services/content_inspector.py`.
+  - `llm_service.py` (1894→1690): stable-relationship-ID helpers + `backfill_thread_ids`
+    → `apps/api/app/services/thread_ids.py`; the static field-schema hint
+    → `apps/api/app/services/llm_prompts.py`.
+  - `chapter_script_service.py` (1783→1623): the patch-by-path engine →
+    `apps/api/app/services/script_patch.py`. (`master_story_service.py` and
+    `plot_outline_service.py` have their own *non-identical* `_apply_patch` copies —
+    converging those is a follow-up.)
 
 Other changes in this branch are below; none change backend/frontend behavior
 unless noted.

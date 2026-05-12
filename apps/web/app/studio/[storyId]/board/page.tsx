@@ -23,6 +23,7 @@ import {
   selectedOptionValue,
 } from "./boardModel";
 import { ChapterModal, RedoArcModal, DeleteChapterDialog } from "./BoardModals";
+import { StructureEditors } from "./StructureEditors";
 
 export default function PlotBoardPage() {
   const { storyId } = useParams<{ storyId: string }>();
@@ -55,15 +56,15 @@ export default function PlotBoardPage() {
   const [arcForm, setArcForm] = useState({ arc_title: "", arc_number: 1, arc_type: "", arc_length_type: "", starting_status_quo: "", main_story_question: "", central_emotional_question: "", main_external_conflict: "", main_internal_conflict: "", main_relationship_conflict: "", main_threat_used: "", ending_type_target: "" });
 
   // Structure editors state - Kishotenketsu
-  const [ki, setKi] = useState({ initial_mystery_or_question: "", opening_image: "", chapter_range: "" });
-  const [sho, setSho] = useState({ tension_growth: "", chapter_range: "" });
-  const [ten, setTen] = useState({ main_twist: "", hidden_truth_revealed: "", major_threat_recontextualized: "", relationship_reversal: "", character_arc_turning_point: "", chapter_range: "" });
-  const [ketsu, setKetsu] = useState({ conflict_resolution: "", emotional_resolution: "", relationship_resolution: "", world_state_after_arc: "", character_final_state: "", chapter_range: "" });
+  const [ki, setKi] = useState<Record<string, string>>({ initial_mystery_or_question: "", opening_image: "", chapter_range: "" });
+  const [sho, setSho] = useState<Record<string, string>>({ tension_growth: "", chapter_range: "" });
+  const [ten, setTen] = useState<Record<string, string>>({ main_twist: "", hidden_truth_revealed: "", major_threat_recontextualized: "", relationship_reversal: "", character_arc_turning_point: "", chapter_range: "" });
+  const [ketsu, setKetsu] = useState<Record<string, string>>({ conflict_resolution: "", emotional_resolution: "", relationship_resolution: "", world_state_after_arc: "", character_final_state: "", chapter_range: "" });
 
   // Structure editors state - Three-Act
-  const [act1, setAct1] = useState({ opening_hook: "", normal_world: "", inciting_incident: "", first_major_choice: "", main_goal_locked: "", chapter_range: "" });
-  const [act2, setAct2] = useState({ midpoint_reveal_or_defeat: "", stakes_increase: "", chapter_range: "" });
-  const [act3, setAct3] = useState({ darkest_moment: "", final_plan_or_breakthrough: "", climax_battle_or_confrontation: "", major_threat_outcome: "", character_arc_payoff: "", relationship_payoff: "", ending_image: "", chapter_range: "" });
+  const [act1, setAct1] = useState<Record<string, string>>({ opening_hook: "", normal_world: "", inciting_incident: "", first_major_choice: "", main_goal_locked: "", chapter_range: "" });
+  const [act2, setAct2] = useState<Record<string, string>>({ midpoint_reveal_or_defeat: "", stakes_increase: "", chapter_range: "" });
+  const [act3, setAct3] = useState<Record<string, string>>({ darkest_moment: "", final_plan_or_breakthrough: "", climax_battle_or_confrontation: "", major_threat_outcome: "", character_arc_payoff: "", relationship_payoff: "", ending_image: "", chapter_range: "" });
 
   // Hydrate form state from saved JSON exactly once per story.
   useHydrateOnce(!!plot.data, storyId, () => {
@@ -763,44 +764,13 @@ export default function PlotBoardPage() {
           )}
 
           {/* ---- STRUCTURE EDITORS ---- */}
-          {structure === "Kishotenketsu" && (
-            <div className="rounded-xl border-2 border-violet-300 bg-violet-50 p-4 space-y-4 sm:rounded-2xl">
-              <h3 className="font-black text-violet-800">Kishotenketsu Outline</h3>
-              <details className="rounded-lg border border-violet-200 bg-white p-3" open><summary className="font-bold text-sm">Ki — Introduction</summary>
-                <div className="mt-2 space-y-2"><Field label="Initial mystery or question" value={ki.initial_mystery_or_question} onChange={(v) => setKi((f) => ({ ...f, initial_mystery_or_question: v }))} /><Field label="Opening image" value={ki.opening_image} onChange={(v) => setKi((f) => ({ ...f, opening_image: v }))} /><Field label="Chapter range" value={ki.chapter_range} onChange={(v) => setKi((f) => ({ ...f, chapter_range: v }))} /></div>
-              </details>
-              <details className="rounded-lg border border-violet-200 bg-white p-3" open><summary className="font-bold text-sm">Sho — Development</summary>
-                <div className="mt-2 space-y-2"><Field label="Tension growth" value={sho.tension_growth} onChange={(v) => setSho((f) => ({ ...f, tension_growth: v }))} /><Field label="Chapter range" value={sho.chapter_range} onChange={(v) => setSho((f) => ({ ...f, chapter_range: v }))} /></div>
-              </details>
-              <details className="rounded-lg border border-violet-200 bg-white p-3" open><summary className="font-bold text-sm">Ten — Twist / Turn</summary>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2"><Field label="Main twist" value={ten.main_twist} onChange={(v) => setTen((f) => ({ ...f, main_twist: v }))} /><Field label="Hidden truth revealed" value={ten.hidden_truth_revealed} onChange={(v) => setTen((f) => ({ ...f, hidden_truth_revealed: v }))} /><Field label="Major threat recontextualized" value={ten.major_threat_recontextualized} onChange={(v) => setTen((f) => ({ ...f, major_threat_recontextualized: v }))} /><Field label="Relationship reversal" value={ten.relationship_reversal} onChange={(v) => setTen((f) => ({ ...f, relationship_reversal: v }))} /><div className="sm:col-span-2"><Field label="Character arc turning point" value={ten.character_arc_turning_point} onChange={(v) => setTen((f) => ({ ...f, character_arc_turning_point: v }))} /></div><Field label="Chapter range" value={ten.chapter_range} onChange={(v) => setTen((f) => ({ ...f, chapter_range: v }))} /></div>
-              </details>
-              <details className="rounded-lg border border-violet-200 bg-white p-3" open><summary className="font-bold text-sm">Ketsu — Conclusion</summary>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2"><Field label="Conflict resolution" value={ketsu.conflict_resolution} onChange={(v) => setKetsu((f) => ({ ...f, conflict_resolution: v }))} /><Field label="Emotional resolution" value={ketsu.emotional_resolution} onChange={(v) => setKetsu((f) => ({ ...f, emotional_resolution: v }))} /><Field label="Relationship resolution" value={ketsu.relationship_resolution} onChange={(v) => setKetsu((f) => ({ ...f, relationship_resolution: v }))} /><Field label="World state after arc" value={ketsu.world_state_after_arc} onChange={(v) => setKetsu((f) => ({ ...f, world_state_after_arc: v }))} /><Field label="Character final state" value={ketsu.character_final_state} onChange={(v) => setKetsu((f) => ({ ...f, character_final_state: v }))} /><Field label="Chapter range" value={ketsu.chapter_range} onChange={(v) => setKetsu((f) => ({ ...f, chapter_range: v }))} /></div>
-              </details>
-            </div>
-          )}
-
-          {(structure === "Three-Act Structure" || structure === "Hero's Journey") && (
-            <div className="rounded-xl border-2 border-violet-300 bg-violet-50 p-4 space-y-4 sm:rounded-2xl">
-              <h3 className="font-black text-violet-800">{structure === "Three-Act Structure" ? "Three-Act Structure" : "Hero's Journey"}</h3>
-              <details className="rounded-lg border border-violet-200 bg-white p-3" open><summary className="font-bold text-sm">Act 1 — Setup</summary>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2"><Field label="Opening hook" value={act1.opening_hook} onChange={(v) => setAct1((f) => ({ ...f, opening_hook: v }))} /><Field label="Normal world" value={act1.normal_world} onChange={(v) => setAct1((f) => ({ ...f, normal_world: v }))} /><Field label="Inciting incident" value={act1.inciting_incident} onChange={(v) => setAct1((f) => ({ ...f, inciting_incident: v }))} /><Field label="First major choice" value={act1.first_major_choice} onChange={(v) => setAct1((f) => ({ ...f, first_major_choice: v }))} /><Field label="Main goal locked" value={act1.main_goal_locked} onChange={(v) => setAct1((f) => ({ ...f, main_goal_locked: v }))} /><Field label="Chapter range" value={act1.chapter_range} onChange={(v) => setAct1((f) => ({ ...f, chapter_range: v }))} /></div>
-              </details>
-              {structure === "Three-Act Structure" && (
-                <details className="rounded-lg border border-violet-200 bg-white p-3" open><summary className="font-bold text-sm">Act 2 — Escalation</summary>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2"><Field label="Midpoint reveal or defeat" value={act2.midpoint_reveal_or_defeat} onChange={(v) => setAct2((f) => ({ ...f, midpoint_reveal_or_defeat: v }))} /><Field label="Stakes increase" value={act2.stakes_increase} onChange={(v) => setAct2((f) => ({ ...f, stakes_increase: v }))} /><Field label="Chapter range" value={act2.chapter_range} onChange={(v) => setAct2((f) => ({ ...f, chapter_range: v }))} /></div>
-                </details>
-              )}
-              <details className="rounded-lg border border-violet-200 bg-white p-3" open><summary className="font-bold text-sm">Act {structure === "Three-Act Structure" ? "3" : "2-3"} — Climax & Resolution</summary>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2"><Field label="Darkest moment" value={act3.darkest_moment} onChange={(v) => setAct3((f) => ({ ...f, darkest_moment: v }))} /><Field label="Final plan or breakthrough" value={act3.final_plan_or_breakthrough} onChange={(v) => setAct3((f) => ({ ...f, final_plan_or_breakthrough: v }))} /><Field label="Climax battle/confrontation" value={act3.climax_battle_or_confrontation} onChange={(v) => setAct3((f) => ({ ...f, climax_battle_or_confrontation: v }))} /><Field label="Major threat outcome" value={act3.major_threat_outcome} onChange={(v) => setAct3((f) => ({ ...f, major_threat_outcome: v }))} /><Field label="Character arc payoff" value={act3.character_arc_payoff} onChange={(v) => setAct3((f) => ({ ...f, character_arc_payoff: v }))} /><Field label="Relationship payoff" value={act3.relationship_payoff} onChange={(v) => setAct3((f) => ({ ...f, relationship_payoff: v }))} /><Field label="Ending image" value={act3.ending_image} onChange={(v) => setAct3((f) => ({ ...f, ending_image: v }))} /><Field label="Chapter range" value={act3.chapter_range} onChange={(v) => setAct3((f) => ({ ...f, chapter_range: v }))} /></div>
-              </details>
-            </div>
-          )}
-
-          {(structure === "Kishotenketsu" || structure === "Three-Act Structure" || structure === "Hero's Journey") && (
-            <button className="mt-1 rounded-xl border-2 border-violet-600 bg-violet-600 px-3 py-1.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50 sm:rounded-2xl sm:px-4 sm:py-2 sm:text-sm" onClick={saveStructureEditors} disabled={!arcLengthSelected || saveAllArc.isPending || patchArc.isPending}>{saveAllArc.isPending ? "Saving..." : "Save Structure Editor"}</button>
-          )}
+          <StructureEditors
+            structure={structure}
+            editors={{ ki, setKi, sho, setSho, ten, setTen, ketsu, setKetsu, act1, setAct1, act2, setAct2, act3, setAct3 }}
+            onSave={saveStructureEditors}
+            saving={saveAllArc.isPending}
+            disabled={!arcLengthSelected || saveAllArc.isPending || patchArc.isPending}
+          />
 
           {/* ---- ACTIONS ---- */}
           <AiFillPanel page="board" fields={[{ key: "arc_overview", label: "Step 1 · Arc Overview", description: "All arc fields (title, conflicts, questions, ending). Generate this first." }, { key: "structure", label: "Step 2 · Structure Plan", description: "Beat order based on the selected narrative structure and arc length. Generate after arc overview." }, { key: "chapters", label: "Step 3 · Chapters", description: "Chapter list with purposes, structure sections, and chapter numbers. Generate after structure." }]} note="Required: pick arc length and narrative structure first. Recommended flow: Step 1 (Arc Overview) → Step 2 (Structure) → Step 3 (Chapters). Each step uses the previous saved data." onFieldSelect={setAiBoardFields} onGenerate={handleAiBoardGenerate} loading={aiGen.isPending} results={aiBoardResults} onClear={() => setAiBoardResults(null)} onApply={handleApplyAi} disabled={!aiPrereqsMet} disabledReason={aiPrereqsMessage} error={aiBoardError} onDismissError={() => setAiBoardError(null)} />

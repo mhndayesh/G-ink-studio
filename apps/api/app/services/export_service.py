@@ -460,7 +460,10 @@ def _panel_full_block(panel: dict, indent: str = "    ") -> list[str]:
         if speaker.lower() in ("narrator", "narration") or (bubble and bubble.lower() == "narration"):
             continue
         bubble_tag = f" ({bubble})" if bubble and bubble.lower() not in ("", "normal", "standard") else ""
-        out.append(f'{indent}  Dialogue: {speaker}{bubble_tag}: "{text}"')
+        # Lowercase the speaker label so it matches the (lowercased) character
+        # reference sheets in this bundle and the importer's lowercase id lookup —
+        # mitigates BUNDLE-AUDIT #7 (mixed character spelling) for the visuals export.
+        out.append(f'{indent}  Dialogue: {speaker.lower()}{bubble_tag}: "{text}"')
     # Render mode — BUNDLE-AUDIT #3: derive from the in-frame named cast, not from
     # panel position. 0 chars → t2i, 1 → i2i, 2 → i2i-2refs, 3+ → i2i-2refs + a
     # warning (a 2-reference stitch can't hold a third character). The studio still

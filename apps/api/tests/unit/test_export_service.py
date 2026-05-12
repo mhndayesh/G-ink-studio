@@ -89,6 +89,21 @@ def test_assemble_visuals_repairs_scrambled_page_location():
     assert "corrected from" in loc_line
 
 
+def test_visuals_dialogue_labels_are_lowercased():
+    cs = {
+        "chapter_metadata": {"chapter_number": 1, "chapter_id": "ch_001", "chapter_title": "X"},
+        "pages": [{"page_number": 1, "page_id": "p1", "scene_id": "s1", "panels": [
+            {"visual": "a street", "dialogue": [
+                {"speaker_name": "Kinji Sato", "text": "Hey."},
+                {"speaker_name": "Narrator", "text": "Later that night."},  # skipped (narration)
+            ]},
+        ]}],
+    }
+    out = "\n".join(es._assemble_visuals_lines({"plot_outline": {}, "chapter_script": cs}, all_scripts=[cs]))
+    assert 'Dialogue: kinji sato: "Hey."' in out
+    assert "Kinji Sato:" not in out  # not the verbatim-cased form
+
+
 def test_validate_export_flags_location_mismatch_and_prompt_noise():
     po = {
         "locations": {"locations": [

@@ -26,6 +26,12 @@ def field_schema_hint(page: str, target_fields: list[str]) -> str:
             "faction": "main_character_faction_alignment{ selected(choose from faction_alignment_options), custom_alignment_type, alignment_details{ linked_master_faction, character_role_in_faction, loyalty_level, reason_for_following_this_side } }",
             "backstory": "character_backstory_mental_state_and_community_place{ selected_backstory_type(choose from backstory_type_options), selected_mental_state(choose from mental_state_options), selected_community_place(choose from community_place_options), backstory_details{ birthplace, family_situation, childhood_summary, important_past_event, past_trauma_or_wound, how_backstory_connects_to_master_world }, mental_state_details{ main_fear, main_desire, biggest_flaw } }",
             "personality": "character_personality{ selected_personality_types[](choose 2-4 from personality_type_options), personality_details{ public_personality, speech_style, habit_or_quirk } }",
+            "story_role": (
+                "story_function(choose from story_function_options in partial_input), "
+                "relationship_to_protagonist(text — their specific bond with the main character(s) by name), "
+                "narrative_fate(choose from narrative_fate_options in partial_input), "
+                "story_impact(1-2 sentences — the concrete effect this character has on the story or protagonist)"
+            ),
         },
         "board": {
             "arc_overview": "arc_title, arc_number(int), arc_type, arc_length_type(plain string, one of: One-Shot/Short Arc/Medium Arc/Long Arc/Saga/Season/Full Series/Custom), arc_summary, starting_status_quo, main_story_question, central_emotional_question, main_external_conflict, main_internal_conflict, main_relationship_conflict, main_threat_used, minor_threats_used[](use names from context), main_factions_used[](use names from context), main_characters_used[](use names from context), relationships_used[](use IDs from context), ending_type_target, custom_arc_overview_details",

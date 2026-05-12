@@ -632,6 +632,22 @@ class LLMService:
                 "arc → selected_arc_type from arc_type_options. "
                 "Only pick values that EXACTLY match strings in those lists."
             ),
+            "side": (
+                "You are the Manga Maker side character generator. Generate side character profile fields as JSON. "
+                "Use the story context (world rules, factions, major characters, plot outline) to create consistent supporting-character details. "
+                "Side characters exist to serve the story and the protagonist — not to overshadow them. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field. "
+                "For array fields use arrays. For text fields use strings. Do NOT duplicate existing major character names. "
+                "SELECTION FIELDS — you MUST also choose values that EXACTLY match the option lists in partial_input: "
+                "status_role → status.selected from status_options, character_role_level.selected from role_options; "
+                "appearance → selected_visual_style from visual_style_options; "
+                "faction → selected (alignment type) from faction_alignment_options; "
+                "backstory → selected_backstory_type from backstory_type_options, selected_mental_state from mental_state_options, selected_community_place from community_place_options; "
+                "personality → selected_personality_types (array, pick 2-4) from personality_type_options; "
+                "story_role → story_function from story_function_options, narrative_fate from narrative_fate_options. "
+                "Only pick values that EXACTLY match strings in those lists."
+            ),
             "board": (
                 "You are the Manga Maker plot generator. Generate plot outline fields as JSON. "
                 "Use the story context (world rules, factions, characters, threats) to create consistent plot details. "
@@ -1119,6 +1135,14 @@ class LLMService:
                 identity_context_msg += f"Existing side characters ({len(side_profiles)}): {', '.join(side_names)}\n"
                 identity_context_msg += f"Major characters (reference, do not duplicate): {', '.join(existing_names)}\n"
                 identity_context_msg += "Side characters should support the story and major characters.\n"
+            if page == "side" and "story_role" in target_fields:
+                major_names = ", ".join(existing_names) if existing_names else "none yet"
+                identity_context_msg += (
+                    f"\nFor story_role: the major characters are [{major_names}]. "
+                    "Define how this side character specifically relates to them and what narrative purpose they serve. "
+                    "relationship_to_protagonist should name the actual major character(s) and describe the bond (e.g. 'Father of Kinji, estranged for 10 years'). "
+                    "story_impact should explain the concrete effect on the story (their death, revelation, betrayal, protection, etc.).\n"
+                )
             user_notes = hints.get("user_character_notes", "").strip()
             if user_notes:
                 identity_context_msg += f"\n=== USER NOTES FOR THIS CHARACTER ===\n{user_notes}\nTreat these notes as the user's creative intent. Align ALL generated fields with this description.\n"

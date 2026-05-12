@@ -40,6 +40,19 @@ const SIDE_AI_FIELDS = [
   { key: "faction", label: "Faction Alignment", description: "Faction links, loyalty, allegiance" },
   { key: "backstory", label: "Backstory", description: "Past, mental state, community place" },
   { key: "personality", label: "Personality", description: "Traits, behavior, speech, quirks" },
+  { key: "story_role", label: "Story Role & Fate", description: "Narrative function, connection to protagonist, and fate" },
+];
+
+const STORY_FUNCTION_OPTS = [
+  "mentor_guide", "tragic_sacrifice", "comic_relief", "love_interest",
+  "rival_turned_ally", "informant", "protective_figure", "betrayer",
+  "catalyst", "loyal_companion", "obstacle", "foil", "villain_origin",
+];
+
+const NARRATIVE_FATE_OPTS = [
+  "survives_story", "dies_heroically", "dies_tragically",
+  "betrays_protagonist", "redeemed", "disappears", "exiled",
+  "arrested", "transforms", "unknown",
 ];
 
 export default function SideCastPage() {
@@ -66,6 +79,7 @@ export default function SideCastPage() {
       if (aiSideFields.includes("faction")) opts.faction_alignment_options = PROFILE_OPTS.FACTION_ALIGN_OPTS;
       if (aiSideFields.includes("backstory")) { opts.backstory_type_options = PROFILE_OPTS.BACKSTORY_OPTS; opts.mental_state_options = PROFILE_OPTS.MENTAL_STATE_OPTS; opts.community_place_options = PROFILE_OPTS.COMMUNITY_OPTS; }
       if (aiSideFields.includes("personality")) opts.personality_type_options = PROFILE_OPTS.PERSONALITY_OPTS;
+      if (aiSideFields.includes("story_role")) { opts.story_function_options = STORY_FUNCTION_OPTS; opts.narrative_fate_options = NARRATIVE_FATE_OPTS; }
       const hints: any = { edit_existing: true, profile_id: editingProfileId, character_name: name };
       if (charNotes.trim()) hints.user_character_notes = charNotes.trim();
       return api.aiGenerate(storyId, {
@@ -207,9 +221,19 @@ export default function SideCastPage() {
             <h3 className="font-black text-sm">Created Side Characters</h3>
             {sideProfiles.map((p: any, i: number) => (
               <div key={p.profile_id || i} className="rounded-lg border-2 border-slate-200 bg-white p-3 flex items-center justify-between">
-                <div>
+                <div className="flex flex-wrap items-center gap-1 min-w-0">
                   <span className="font-bold">{p.character_name || "Unnamed"}</span>
-                  <span className="ml-2 text-xs text-slate-500">{safeRole(p)}</span>
+                  <span className="ml-1 text-xs text-slate-500">{safeRole(p)}</span>
+                  {p.story_role?.story_function && (
+                    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-700 capitalize">
+                      {String(p.story_role.story_function).replace(/_/g, " ")}
+                    </span>
+                  )}
+                  {p.story_role?.narrative_fate && (
+                    <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700 capitalize">
+                      {String(p.story_role.narrative_fate).replace(/_/g, " ")}
+                    </span>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button className="text-xs font-bold text-indigo-600 underline" onClick={() => handleEdit(i)}>Edit</button>
@@ -255,6 +279,65 @@ export default function SideCastPage() {
             />
           )}
           <ProfileTabs key={`${editingProfileId || "new"}-${aiApplyCounter}`} resetKey={`${editingProfileId || "new"}-${aiApplyCounter}`} onDataChange={setProfileData} initialData={profileData} />
+          {editingIdx !== null && (
+            <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 space-y-3">
+              <div>
+                <h4 className="font-black text-sm text-violet-900">Story Role & Fate</h4>
+                <p className="mt-0.5 text-xs text-violet-700">How does this character connect to the story and what happens to them?</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold">Story Function</label>
+                <div className="flex flex-wrap gap-2">
+                  {STORY_FUNCTION_OPTS.map(opt => (
+                    <button
+                      key={opt}
+                      type="button"
+                      className={`rounded-lg border-2 px-2.5 py-1 text-xs font-bold capitalize transition-colors ${
+                        profileData?.story_role?.story_function === opt
+                          ? "border-violet-600 bg-violet-600 text-white"
+                          : "border-slate-300 bg-white hover:border-violet-400"
+                      }`}
+                      onClick={() => setProfileData(prev => ({ ...prev, story_role: { ...(prev.story_role || {}), story_function: opt } }))}
+                    >
+                      {opt.replace(/_/g, " ")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Field
+                label="Relationship to protagonist"
+                value={profileData?.story_role?.relationship_to_protagonist || ""}
+                onChange={v => setProfileData(prev => ({ ...prev, story_role: { ...(prev.story_role || {}), relationship_to_protagonist: v } }))}
+                placeholder="e.g. Father of Kinji, estranged for 10 years"
+              />
+              <div>
+                <label className="mb-1 block text-xs font-bold">Narrative Fate</label>
+                <div className="flex flex-wrap gap-2">
+                  {NARRATIVE_FATE_OPTS.map(opt => (
+                    <button
+                      key={opt}
+                      type="button"
+                      className={`rounded-lg border-2 px-2.5 py-1 text-xs font-bold capitalize transition-colors ${
+                        profileData?.story_role?.narrative_fate === opt
+                          ? "border-rose-600 bg-rose-600 text-white"
+                          : "border-slate-300 bg-white hover:border-rose-400"
+                      }`}
+                      onClick={() => setProfileData(prev => ({ ...prev, story_role: { ...(prev.story_role || {}), narrative_fate: opt } }))}
+                    >
+                      {opt.replace(/_/g, " ")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Field
+                label="Story impact"
+                value={profileData?.story_role?.story_impact || ""}
+                onChange={v => setProfileData(prev => ({ ...prev, story_role: { ...(prev.story_role || {}), story_impact: v } }))}
+                textarea
+                placeholder="e.g. His death in chapter 3 is what pushes the protagonist to take up the fight."
+              />
+            </div>
+          )}
           <Field label="Character name" value={name} onChange={setName} placeholder="Old Man Sho, Villager #3..." />
           {editingIdx !== null ? (
             <button

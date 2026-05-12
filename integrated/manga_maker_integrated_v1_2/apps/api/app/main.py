@@ -30,6 +30,7 @@ from app.api.v1.db import router as db_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.ai import router as ai_router
 from app.api.v1.export import router as export_router
+from app.api.v1.locations import router as locations_router
 from app.core.errors import MangaMakerError, manga_error_handler
 from app.core.config import get_settings
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -144,4 +145,5 @@ app.include_router(vector_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
 app.include_router(db_router, prefix="/api/v1")
 app.include_router(ai_router, prefix="/api/v1")
+app.include_router(locations_router, prefix="/api/v1")
 app.include_router(export_router, prefix="/api/v1")

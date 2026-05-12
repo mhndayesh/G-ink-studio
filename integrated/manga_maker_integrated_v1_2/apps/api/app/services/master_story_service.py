@@ -63,6 +63,7 @@ class MasterStoryService:
         "major_threats_and_minor_side_threats.threat_details.time_limit",
         "major_threats_and_minor_side_threats.threat_details.hidden_truth_behind_threat",
         "major_threats_and_minor_side_threats.threat_details.custom_threat_details",
+        "faction_visual_signatures.signatures",
     }
 
     _allowed_faction_detail_fields = {

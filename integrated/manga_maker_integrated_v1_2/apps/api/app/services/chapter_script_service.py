@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import copy
 import logging
 from datetime import datetime, timezone
@@ -107,20 +108,16 @@ class ChapterScriptService:
         Required to UNLOCK the panel (gate-keepers):
           1. plot_outline.json exists
           2. story_integrity_lock is NOT locked
-          3. plot_threads has at least one filled thread
-          4. plot_outline has at least one chapter
-          5. plot_outline has at least one scene card
+          3. plot_outline has at least one chapter
 
-        The plot_workspace (Writing Desk) is OPTIONAL — it expands a rough idea
-        into richer text for the script generator. The panel does NOT require it.
+        plot_threads and scene_cards are OPTIONAL enrichment — if present they
+        produce a richer script, but the generator can work from chapter data alone.
+        The plot_workspace (Writing Desk) is also OPTIONAL.
         """
         plot_record = self.registry.get_current_file(story_id, "plot_outline")
         plot = plot_record["json_copy"] if plot_record else {}
-        plot_threads = plot.get("plot_threads", {}) if plot else {}
         raw_chapters = plot.get("chapter_or_episode_list", {}).get("chapters", []) if plot else []
-        raw_scenes = plot.get("scene_cards", {}).get("scenes", []) if plot else []
         chapters = self._meaningful_chapters(raw_chapters)
-        scenes = self._meaningful_scenes(raw_scenes)
         lock = plot.get("story_integrity_lock", {}) if plot else {}
 
         blockers: list[dict[str, str]] = []
@@ -136,23 +133,11 @@ class ChapterScriptService:
                 "message": f"Resolve the story integrity lock (deleted chapter #{lock.get('deleted_chapter_number')}) first.",
                 "fix_route": "/plot-outline#integrity-lock",
             })
-        if plot_record and not self._plot_threads_have_content(plot_threads):
-            blockers.append({
-                "code": "PLOT_THREADS_REQUIRED",
-                "message": "Fill in at least one plot thread (main goal, character arc, relationship, threat, or power).",
-                "fix_route": "/plot-outline/threads",
-            })
         if plot_record and not chapters:
             blockers.append({
                 "code": "NO_CHAPTERS",
                 "message": "Add at least one chapter to the plot outline.",
                 "fix_route": "/plot-outline/chapters",
-            })
-        if plot_record and not scenes:
-            blockers.append({
-                "code": "NO_SCENES",
-                "message": "Add at least one scene card.",
-                "fix_route": "/plot-outline/scenes",
             })
 
         # Determine current phase + the explicit next action
@@ -365,11 +350,20 @@ class ChapterScriptService:
     def validate_script(self, story_id: str) -> dict[str, Any]:
         record = self._get_record(story_id)
         self._validate_runtime(record["json_copy"], story_id=story_id, version_id=record["version_id"])
+
+        # Cross-file ID reference check — warns about dangling IDs without raising
+        cross_ref_files: dict[str, Any] = {"chapter_script": record["json_copy"]}
+        for ft in ("characters", "plot_outline"):
+            rec = self.registry.get_current_file(story_id, ft)
+            if rec:
+                cross_ref_files[ft] = rec.get("json_copy", {})
+        cross_ref_warnings = self.validator.validate_cross_references(cross_ref_files)
+
         return {
             "story_id": story_id,
             "version_id": record["version_id"],
             "file_type": "chapter_script",
-            "validation_status": "passed",
+            "validation_status": "passed" if not cross_ref_warnings else "warnings",
             "checks": [
                 "story_id matches registry",
                 "version_id matches current version",
@@ -379,6 +373,7 @@ class ChapterScriptService:
                 "script_format.format_type is manga_script",
                 "chapter -> scenes -> pages -> panels structure exists",
             ],
+            "cross_ref_warnings": cross_ref_warnings,
         }
 
     def generate_from_workspace(self, story_id: str, chapter_id: str = "") -> dict[str, Any]:
@@ -398,14 +393,24 @@ class ChapterScriptService:
                 status_code=400,
             )
 
-        plot_threads = plot_outline.get("plot_threads", {})
-        if not self._plot_threads_have_content(plot_threads):
+        # ── guard: require at least one named location ────────────────────────
+        locs_block = plot_outline.get("locations", {})
+        named_locs = [
+            l for l in ((locs_block.get("locations", []) if isinstance(locs_block, dict) else []) or [])
+            if isinstance(l, dict) and l.get("name")
+        ]
+        if not named_locs:
             raise MangaMakerError(
-                "PLOT_THREADS_REQUIRED",
-                "Fill in at least one plot thread (main goal, a character arc, relationship, threat, or power thread) "
-                "in the Plot Outline before generating the manga script.",
+                "LOCATIONS_REQUIRED",
+                "Add at least one named location in the Locations page before generating a chapter script. "
+                "Panels are assigned to locations during generation.",
                 status_code=400,
             )
+        loc_name_to_id: dict[str, str] = {
+            l["name"].strip().lower(): l.get("location_id", "")
+            for l in named_locs
+            if l.get("name") and l.get("location_id")
+        }
 
         # ── chapter + scenes ──────────────────────────────────────────────────
         chapter = self._find_chapter(plot_outline, chapter_id)
@@ -431,12 +436,26 @@ class ChapterScriptService:
                 "version snapshot) before generating a new one.",
                 status_code=409,
             )
+
+        # ── scene fallback: synthesise from chapter if no scene cards exist ──
         if not scenes:
-            raise MangaMakerError(
-                "NO_SCENES",
-                f"Chapter {chapter_id_used} has no scene cards. Add at least one scene before generating the script.",
-                status_code=400,
-            )
+            scenes = [{
+                "scene_id": f"scene_{chapter_id_used}_auto",
+                "scene_order": 1,
+                "scene_title": chapter.get("chapter_title", "Scene 1"),
+                "scene_goal": chapter.get("chapter_purpose") or chapter.get("summary", ""),
+                "scene_conflict": chapter.get("main_conflict", ""),
+                "visual_manga_moment": chapter.get("twist_or_hook", ""),
+                "panel_mood": chapter.get("emotional_beat", ""),
+                "ending_beat": chapter.get("ending_cliffhanger", ""),
+                "location": "",
+                "time": "",
+                "characters_present": chapter.get("characters_present", []),
+                "relationship_dynamic_used": "",
+                "new_information_revealed": "",
+                "action_or_dialogue_focus": "",
+                "custom_scene_details": "",
+            }]
 
         # ── source text: workspace expansion if present, else chapter summary ─
         final_text = (
@@ -504,6 +523,7 @@ class ChapterScriptService:
                 "scene_title": s.get("scene_title", f"Scene {i + 1}"),
                 "scene_purpose": s.get("scene_goal") or "Turn approved workspace writing into a clean manga scene.",
                 "location": s.get("location", ""),
+                "location_id": loc_name_to_id.get((s.get("location") or "").strip().lower(), ""),
                 "time": s.get("time", ""),
                 "characters_present": s.get("characters_present", []),
                 "relationship_dynamic_used": s.get("relationship_dynamic_used", ""),
@@ -565,6 +585,8 @@ class ChapterScriptService:
                 "page_id": f"page_{page_num:03d}",
                 "page_number": page_num,
                 "scene_id": sid,
+                "location_id": loc_name_to_id.get(location.strip().lower(), ""),
+                "location_name": location,
                 "page_purpose": scene.get("scene_goal") or f"Script page for scene {page_num}.",
                 "page_mood": mood,
                 "panels": panels,
@@ -585,6 +607,7 @@ class ChapterScriptService:
             ch_chars = chapter.get("characters_present", [])
             all_chars = ch_chars if isinstance(ch_chars, list) else []
 
+        plot_threads = plot_outline.get("plot_threads", {}) or {}
         threads_used: list[str] = []
         main_thread = plot_threads.get("main_plot_thread", {})
         if main_thread.get("goal"):
@@ -680,6 +703,554 @@ class ChapterScriptService:
             "llm_used": llm_used,
             "llm_warnings": llm_warnings,
             "validation_status": "passed",
+        }
+
+    # ── batch generation ──────────────────────────────────────────────────────
+
+    def _generate_chapter_no_save(
+        self,
+        story_id: str,
+        chapter_id: str,
+        plot_outline: dict[str, Any],
+        workspace: dict[str, Any],
+        named_locs: list[dict[str, Any]],
+        loc_name_to_id: dict[str, str],
+    ) -> dict[str, Any]:
+        """Build chapter script content without I/O writes. Safe to call from parallel threads.
+
+        Returns a dict of content fields plus private '_*' metadata keys.
+        Caller merges the public keys into the script template, then saves.
+        """
+        chapter = self._find_chapter(plot_outline, chapter_id)
+        chapter_id_used = chapter.get("chapter_id", chapter_id or "ch_001")
+        scenes = self._find_scenes_for_chapter(plot_outline, chapter_id_used)
+
+        if not self._chapter_has_content(chapter):
+            raise MangaMakerError("NO_CHAPTERS", f"Chapter {chapter_id!r} has no content.", status_code=400)
+
+        if not scenes:
+            scenes = [{
+                "scene_id": f"scene_{chapter_id_used}_auto",
+                "scene_order": 1,
+                "scene_title": chapter.get("chapter_title", "Scene 1"),
+                "scene_goal": chapter.get("chapter_purpose") or chapter.get("summary", ""),
+                "scene_conflict": chapter.get("main_conflict", ""),
+                "visual_manga_moment": chapter.get("twist_or_hook", ""),
+                "panel_mood": chapter.get("emotional_beat", ""),
+                "ending_beat": chapter.get("ending_cliffhanger", ""),
+                "location": "",
+                "time": "",
+                "characters_present": chapter.get("characters_present", []),
+                "relationship_dynamic_used": "",
+                "new_information_revealed": "",
+                "action_or_dialogue_focus": "",
+                "custom_scene_details": "",
+            }]
+
+        final_text = (
+            workspace.get("ai_completion", {}).get("final_text_used_for_analysis")
+            or workspace.get("user_free_writing", {}).get("text", "")
+            or ""
+        ).strip()
+        used_workspace = bool(final_text)
+        if not final_text:
+            parts: list[str] = []
+            if chapter.get("summary"):
+                parts.append(chapter["summary"])
+            if chapter.get("main_conflict"):
+                parts.append(f"Main conflict: {chapter['main_conflict']}")
+            if chapter.get("emotional_beat"):
+                parts.append(f"Emotional beat: {chapter['emotional_beat']}")
+            if chapter.get("ending_cliffhanger"):
+                parts.append(f"Ending: {chapter['ending_cliffhanger']}")
+            for s in scenes:
+                if s.get("scene_goal"):
+                    parts.append(f"Scene goal: {s['scene_goal']}")
+                if s.get("visual_manga_moment"):
+                    parts.append(f"Visual moment: {s['visual_manga_moment']}")
+            final_text = " ".join(parts) or f"Chapter {chapter.get('chapter_number', '?')} script."
+
+        built: dict[str, Any] = {}
+
+        metadata = built.setdefault("chapter_metadata", {})
+        metadata["chapter_id"] = chapter_id_used
+        metadata["chapter_number"] = chapter.get("chapter_number", 1)
+        metadata["chapter_title"] = chapter.get("chapter_title", "")
+        metadata["chapter_status"] = "generated"
+        metadata["created_from_workspace_id"] = workspace.get("workspace_id", "") if used_workspace else ""
+        metadata["created_from_plot_outline_chapter_id"] = chapter_id_used
+        metadata["generation_source"] = "workspace_expansion" if used_workspace else "plot_outline_only"
+        metadata["approved_as_official"] = False
+
+        purpose = built.setdefault("chapter_purpose", {})
+        purpose["summary"] = chapter.get("summary") or final_text[:300]
+        purpose["chapter_goal"] = chapter.get("chapter_purpose", "")
+        purpose["reader_question"] = (
+            plot_outline.get("story_arc_overview", {}).get("main_story_question", "")
+            or chapter.get("twist_or_hook", "")
+        )
+        purpose["opening_hook"] = scenes[0].get("scene_goal", "") if scenes else ""
+        purpose["ending_hook"] = chapter.get("ending_cliffhanger", "")
+        purpose["main_conflict"] = chapter.get("main_conflict", "")
+        purpose["main_emotional_beat"] = chapter.get("emotional_beat", "")
+        rels_used = chapter.get("relationships_used", [])
+        purpose["main_relationship_dynamic"] = ", ".join(rels_used) if isinstance(rels_used, list) else str(rels_used)
+        world_rules = chapter.get("world_rules_shown", [])
+        purpose["main_world_rule_shown"] = ", ".join(world_rules) if isinstance(world_rules, list) else str(world_rules)
+        powers = chapter.get("power_system_shown", [])
+        purpose["main_power_or_ability_shown"] = ", ".join(powers) if isinstance(powers, list) else str(powers)
+        threats = chapter.get("threats_used", [])
+        purpose["threat_hint_or_reveal"] = ", ".join(threats) if isinstance(threats, list) else str(threats)
+        purpose["custom_chapter_purpose_details"] = chapter.get("custom_chapter_details", "")
+
+        built["chapter_scene_breakdown"] = [
+            {
+                "scene_id": s.get("scene_id", f"scene_{i + 1:03d}"),
+                "scene_order": s.get("scene_order", i + 1),
+                "scene_title": s.get("scene_title", f"Scene {i + 1}"),
+                "scene_purpose": s.get("scene_goal") or "Turn approved workspace writing into a clean manga scene.",
+                "location": s.get("location", ""),
+                "location_id": loc_name_to_id.get((s.get("location") or "").strip().lower(), ""),
+                "time": s.get("time", ""),
+                "characters_present": s.get("characters_present", []),
+                "relationship_dynamic_used": s.get("relationship_dynamic_used", ""),
+                "scene_goal": s.get("scene_goal", ""),
+                "scene_conflict": s.get("scene_conflict", chapter.get("main_conflict", "")),
+                "emotional_tone": s.get("panel_mood", ""),
+                "new_information_revealed": s.get("new_information_revealed", ""),
+                "visual_manga_moment": s.get("visual_manga_moment", ""),
+                "ending_beat": s.get("ending_beat", chapter.get("ending_cliffhanger", "")),
+                "linked_plot_outline_scene_id": s.get("scene_id", f"scene_{i + 1:03d}"),
+            }
+            for i, s in enumerate(scenes)
+        ]
+
+        pages: list[dict[str, Any]] = []
+        for page_num, scene in enumerate(scenes, start=1):
+            sid = scene.get("scene_id", f"scene_{page_num:03d}")
+            location = scene.get("location", "")
+            visual_moment = scene.get("visual_manga_moment") or (f"The scene unfolds at {location}." if location else "A key manga moment opens the scene.")
+            conflict = scene.get("scene_conflict") or chapter.get("main_conflict", "")
+            new_info = scene.get("new_information_revealed", "")
+            ending = scene.get("ending_beat") or chapter.get("ending_cliffhanger", "")
+            chars = scene.get("characters_present") or chapter.get("characters_present", [])
+            chars_str = ", ".join(chars) if isinstance(chars, list) else str(chars)
+            mood = scene.get("panel_mood", "")
+            panels = [
+                self._panel(f"panel_{page_num:03d}_001", 1, "Establishing Shot", visual_moment, "", ""),
+                self._panel(f"panel_{page_num:03d}_002", 2, "Wide Shot", f"{chars_str or 'Characters'} in {'the ' + location if location else 'the scene'}. Scene goal: {scene.get('scene_goal', '')}", "", ""),
+                self._panel(f"panel_{page_num:03d}_003", 3, "Action Shot", conflict or "Tension builds.", "", ""),
+                self._panel(f"panel_{page_num:03d}_004", 4, "Reaction Shot", new_info or "Characters react to the unfolding events.", "", ""),
+                self._panel(f"panel_{page_num:03d}_005", 5, "Close-Up", ending or "The scene ends on a forward hook.", "", ""),
+            ]
+            for p in panels:
+                p["mood"] = mood
+            pages.append({
+                "page_id": f"page_{page_num:03d}",
+                "page_number": page_num,
+                "scene_id": sid,
+                "location_id": loc_name_to_id.get(location.strip().lower(), ""),
+                "location_name": location,
+                "page_purpose": scene.get("scene_goal") or f"Script page for scene {page_num}.",
+                "page_mood": mood,
+                "panels": panels,
+            })
+        built["pages"] = pages
+
+        all_chars: list[str] = []
+        all_locations: list[str] = []
+        for s in scenes:
+            for c in (s.get("characters_present") or []):
+                if c and c not in all_chars:
+                    all_chars.append(c)
+            loc = s.get("location", "")
+            if loc and loc not in all_locations:
+                all_locations.append(loc)
+        if not all_chars:
+            ch_chars = chapter.get("characters_present", [])
+            all_chars = ch_chars if isinstance(ch_chars, list) else []
+
+        plot_threads = plot_outline.get("plot_threads", {}) or {}
+        threads_used: list[str] = []
+        main_thread = plot_threads.get("main_plot_thread", {})
+        if main_thread.get("goal"):
+            threads_used.append(f"main_plot_thread: {str(main_thread['goal'])[:120]}")
+        for arc in plot_threads.get("character_arc_threads", []):
+            if isinstance(arc, dict):
+                arc_chars = arc.get("character_id", "")
+                if arc_chars and any(c == arc_chars or arc_chars in c for c in all_chars):
+                    threads_used.append(f"character_arc: {arc_chars}")
+        for t_thread in plot_threads.get("threat_threads", []):
+            if isinstance(t_thread, dict) and t_thread.get("threat_id_or_name"):
+                threat_name = t_thread["threat_id_or_name"]
+                ch_threats = chapter.get("threats_used", [])
+                if isinstance(ch_threats, list) and any(threat_name in t for t in ch_threats):
+                    threads_used.append(f"threat_thread: {threat_name}")
+
+        linked_ctx = built.setdefault("linked_story_context", {})
+        linked_ctx["characters_present"] = all_chars
+        linked_ctx["relationships_used"] = chapter.get("relationships_used", []) if isinstance(chapter.get("relationships_used"), list) else []
+        linked_ctx["factions_used"] = chapter.get("factions_used", []) if isinstance(chapter.get("factions_used"), list) else []
+        linked_ctx["locations_used"] = all_locations
+        linked_ctx["world_rules_used"] = chapter.get("world_rules_shown", []) if isinstance(chapter.get("world_rules_shown"), list) else []
+        linked_ctx["powers_used"] = chapter.get("power_system_shown", []) if isinstance(chapter.get("power_system_shown"), list) else []
+        linked_ctx["major_threats_used"] = chapter.get("threats_used", []) if isinstance(chapter.get("threats_used"), list) else []
+        linked_ctx["minor_threats_used"] = []
+        linked_ctx["plot_threads_used"] = threads_used
+        linked_ctx["foreshadowing_used"] = []
+
+        important_moments: list[str] = []
+        location_notes: list[str] = []
+        seen_locs: set[str] = set()
+        for s in scenes:
+            vm = (s.get("visual_manga_moment") or "").strip()
+            if vm:
+                important_moments.append(f"Scene {s.get('scene_id', '?')}: {vm[:200]}")
+            loc = (s.get("location") or "").strip()
+            if loc and loc not in seen_locs:
+                seen_locs.add(loc)
+                location_notes.append(loc)
+        power_notes: list[str] = []
+        ch_powers = chapter.get("power_system_shown", [])
+        if isinstance(ch_powers, list):
+            power_notes.extend(p for p in ch_powers if isinstance(p, str) and p.strip())
+        symbol_notes: list[str] = []
+        if chapter.get("twist_or_hook"):
+            symbol_notes.append(f"Twist/hook motif: {chapter['twist_or_hook'][:160]}")
+        if chapter.get("emotional_beat"):
+            symbol_notes.append(f"Emotional motif: {chapter['emotional_beat'][:160]}")
+        built["chapter_visual_index"] = {
+            "important_visual_moments": important_moments,
+            "new_character_design_notes": [],
+            "new_location_design_notes": location_notes,
+            "power_visuals_used": power_notes,
+            "symbolism_or_motifs_used": symbol_notes,
+        }
+
+        built["approval"] = {"script_approved_by_user": False, "ready_for_memory_update": False}
+        built["chapter_event_extraction"] = {"status": "not_started", "detected_events_from_script": []}
+        built["memory_update_plan_after_chapter"] = {"next_version_id": ""}
+
+        llm_used = False
+        llm_warnings: list[str] = []
+        if self.llm_service:
+            temp_script: dict[str, Any] = {"story_id": story_id, "pages": built["pages"]}
+            llm_used, llm_warnings = self._enhance_panels_with_llm(
+                story_id=story_id,
+                script=temp_script,
+                chapter=chapter,
+                scenes=scenes,
+                final_text=final_text,
+                plot_threads=plot_threads,
+                plot_outline=plot_outline,
+            )
+            built["pages"] = temp_script["pages"]
+
+        built["_llm_used"] = llm_used
+        built["_llm_warnings"] = llm_warnings
+        built["_used_workspace"] = used_workspace
+        built["_scenes_count"] = len(scenes)
+        built["_threads_used"] = threads_used
+        return built
+
+    def fill_visuals_batch_all(
+        self,
+        story_id: str,
+        chapter_ids: list[str],
+        available_locations: list[dict[str, Any]],
+        *,
+        llm_service: Any,
+        version_service: Any,
+    ) -> dict[str, Any]:
+        """Fill ALL chapters' panel visuals sequentially, one LLM call per chapter.
+
+        Each call receives a slim context containing only the current chapter's data
+        and the characters present in it — not the entire story — to keep prompts small.
+        """
+        # Load only the files needed to build slim per-chapter context.
+        ms_rec = self.registry.get_current_file(story_id, "master_story")
+        ms = (ms_rec.get("json_copy") or {}) if ms_rec else {}
+
+        chars_rec = self.registry.get_current_file(story_id, "characters")
+        chars = (chars_rec.get("json_copy") or {}) if chars_rec else {}
+
+        plot_rec = self.registry.get_current_file(story_id, "plot_outline")
+        plot = (plot_rec.get("json_copy") or {}) if plot_rec else {}
+
+        # Pre-index characters by lowercased name for fast per-chapter filtering.
+        major_profiles: list[dict[str, Any]] = [
+            p for p in (chars.get("created_major_character_profiles") or []) if isinstance(p, dict)
+        ]
+        side_profiles: list[dict[str, Any]] = [
+            p for p in (chars.get("created_side_character_profiles") or []) if isinstance(p, dict)
+        ]
+
+        # Pre-index plot-outline chapters by chapter_id.
+        po_chapters = (plot.get("chapter_or_episode_list") or {}).get("chapters") or []
+        po_by_id: dict[str, dict[str, Any]] = {
+            ch.get("chapter_id"): ch for ch in po_chapters if isinstance(ch, dict)
+        }
+
+        # Collect latest chapter-script data per chapter from version history.
+        rows = self.registry.list_files_across_versions(story_id, "chapter_script")
+        by_chapter: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            data = row.get("json_copy", {}) or {}
+            ch_id = ((data.get("chapter_metadata") or {}).get("chapter_id") or "").strip()
+            if ch_id and data.get("pages"):
+                by_chapter[ch_id] = data  # later row = newer version wins
+        # Also include the current working slot.
+        current_rec = self.registry.get_current_file(story_id, "chapter_script")
+        if current_rec:
+            data = current_rec.get("json_copy", {}) or {}
+            ch_id = ((data.get("chapter_metadata") or {}).get("chapter_id") or "").strip()
+            if ch_id and data.get("pages"):
+                by_chapter[ch_id] = data
+
+        if chapter_ids:
+            id_set = set(chapter_ids)
+            id_order = {cid: i for i, cid in enumerate(chapter_ids)}
+            chapters_to_process = sorted(
+                [(ch_id, data) for ch_id, data in by_chapter.items() if ch_id in id_set],
+                key=lambda x: id_order.get(x[0], 999),
+            )
+        else:
+            chapters_to_process = sorted(
+                by_chapter.items(),
+                key=lambda x: (x[1].get("chapter_metadata") or {}).get("chapter_number", 999),
+            )
+
+        if not chapters_to_process:
+            raise MangaMakerError("NO_CHAPTERS", "No chapters with script pages found.", status_code=400)
+
+        _TEXT_FIELDS = ["visual", "character_action", "background_details",
+                        "facial_expression", "pose_or_body_language", "mood", "narration"]
+
+        summary: list[dict[str, Any]] = []
+        for ch_id, ch_data in chapters_to_process:
+            try:
+                ch_meta = ch_data.get("chapter_metadata") or {}
+                po_ch = po_by_id.get(ch_id) or {}
+
+                # Filter characters to only those present in this chapter.
+                present_raw = ch_meta.get("characters_present") or po_ch.get("characters_present") or []
+                present_lower = {str(n).strip().lower() for n in present_raw if n}
+                chapter_major = [p for p in major_profiles if (p.get("character_name") or "").strip().lower() in present_lower]
+                chapter_side = [p for p in side_profiles if (p.get("character_name") or "").strip().lower() in present_lower]
+                # Fallback: send up to 4 major profiles when no match found.
+                if not chapter_major and not chapter_side:
+                    chapter_major = major_profiles[:4]
+
+                # Slim context: story essentials + this chapter only.
+                slim_context: dict[str, Any] = {
+                    "master_story": {
+                        "idea_so_far": (ms.get("idea_so_far") or "")[:200],
+                        "world_type": ms.get("world_type") or {},
+                        "faction_visual_signatures": ms.get("faction_visual_signatures") or {},
+                    },
+                    "characters": {
+                        "created_major_character_profiles": chapter_major,
+                        "created_side_character_profiles": chapter_side,
+                    },
+                    "plot_outline": {
+                        "chapter_or_episode_list": {"chapters": [po_ch] if po_ch else []},
+                    },
+                }
+
+                fill_result = llm_service.fill_chapter_panels_batch(
+                    story_id=story_id,
+                    chapter_metadata=ch_meta,
+                    pages=ch_data.get("pages") or [],
+                    available_locations=available_locations,
+                    context=slim_context,
+                )
+
+                panels_map: dict[str, Any] = fill_result.get("panels") or {}
+                if not panels_map:
+                    summary.append({"chapter_id": ch_id, "status": "skipped", "reason": "LLM returned no panels"})
+                    continue
+
+                # Load chapter into working slot and apply fills.
+                record, script = self._editable(story_id)
+                load_fields = [
+                    "chapter_metadata", "chapter_purpose", "linked_story_context",
+                    "chapter_scene_breakdown", "pages", "chapter_dialogue_index",
+                    "chapter_visual_index", "chapter_event_extraction", "continuity_checks",
+                    "approval", "custom_chapter_script_details",
+                ]
+                for field in load_fields:
+                    if field in ch_data:
+                        script[field] = copy.deepcopy(ch_data[field])
+                script.setdefault("chapter_metadata", {})["chapter_status"] = "generated"
+                script.setdefault("approval", {})["script_approved_by_user"] = False
+                script.setdefault("memory_update_plan_after_chapter", {})["next_version_id"] = ""
+
+                pages = script.get("pages", []) or []
+                for page in pages:
+                    for panel in (page.get("panels") or []):
+                        pid = panel.get("panel_id", "")
+                        filled = panels_map.get(pid)
+                        if not filled:
+                            continue
+                        for f in _TEXT_FIELDS:
+                            val = filled.get(f)
+                            if val is None:
+                                continue
+                            if isinstance(val, dict):
+                                val = val.get("selected", "") if "selected" in val else str(val)
+                            s = str(val).strip()
+                            if s:
+                                panel[f] = s
+                        if filled.get("location_id"):
+                            panel["location_id"] = str(filled["location_id"]).strip()
+                        if filled.get("render_mode"):
+                            rm = filled["render_mode"]
+                            if isinstance(rm, str):
+                                panel["render_mode"] = {"selected": rm, "options": ["t2i", "i2i", "layered"]}
+                script["pages"] = pages
+
+                self._save(story_id, record, script)
+                approve_result = self.approve_script(story_id, chapter_id=ch_id)
+
+                try:
+                    candidate = version_service.create_simple_snapshot(story_id)
+                    version_id = candidate["version_id"]
+                    official = version_service.mark_official(story_id, version_id)
+                    approve_result["created_version_id"] = version_id
+                    approve_result["version_status"] = official.get("status", "official")
+                except Exception as exc:
+                    approve_result["version_error"] = str(exc)
+
+                summary.append({
+                    "chapter_id": ch_id,
+                    "status": "done",
+                    "panels_filled": len(panels_map),
+                    "warnings": fill_result.get("warnings", []),
+                    **approve_result,
+                })
+            except Exception as exc:
+                logger.error("[VIS BATCH] chapter %s failed: %s", ch_id, exc)
+                summary.append({"chapter_id": ch_id, "status": "error", "error": str(exc)})
+
+        return {
+            "chapters_processed": sum(1 for s in summary if s.get("status") == "done"),
+            "chapters_skipped": sum(1 for s in summary if s.get("status") == "skipped"),
+            "chapters_failed": sum(1 for s in summary if s.get("status") == "error"),
+            "results": summary,
+        }
+
+    def generate_batch_and_approve(
+        self,
+        story_id: str,
+        chapter_ids: list[str],
+        *,
+        version_service: Any,
+    ) -> dict[str, Any]:
+        """Generate all requested chapters with parallel LLM calls, then sequentially write+approve+snapshot.
+
+        LLM calls run concurrently (up to 5 at once). Disk writes, approvals, and version
+        snapshots are sequential to avoid registry race conditions. Safe to call for all
+        chapters at once — replaces the frontend per-chapter loop.
+        """
+        plot_outline = self._current_file(story_id, "plot_outline")["json_copy"]
+
+        lock = plot_outline.get("story_integrity_lock", {})
+        if lock.get("locked"):
+            raise MangaMakerError(
+                "INTEGRITY_LOCKED",
+                f"Resolve the story integrity lock (deleted chapter #{lock.get('deleted_chapter_number')}) before generating.",
+                status_code=400,
+            )
+
+        locs_block = plot_outline.get("locations", {})
+        named_locs = [
+            l for l in ((locs_block.get("locations", []) if isinstance(locs_block, dict) else []) or [])
+            if isinstance(l, dict) and l.get("name")
+        ]
+        if not named_locs:
+            raise MangaMakerError("LOCATIONS_REQUIRED", "Add at least one named location before generating chapter scripts.", status_code=400)
+        loc_name_to_id: dict[str, str] = {
+            l["name"].strip().lower(): l.get("location_id", "")
+            for l in named_locs
+            if l.get("name") and l.get("location_id")
+        }
+
+        workspace_record = self.registry.get_current_file(story_id, "plot_workspace")
+        workspace = workspace_record["json_copy"] if workspace_record else {}
+
+        all_chapters = plot_outline.get("chapter_or_episode_list", {}).get("chapters", [])
+        if chapter_ids:
+            id_order = {cid: i for i, cid in enumerate(chapter_ids)}
+            id_set = set(chapter_ids)
+            chapters_to_process = sorted(
+                [ch for ch in all_chapters if ch.get("chapter_id") in id_set and self._chapter_has_content(ch)],
+                key=lambda ch: id_order.get(ch.get("chapter_id", ""), 999),
+            )
+        else:
+            chapters_to_process = [ch for ch in all_chapters if self._chapter_has_content(ch)]
+
+        if not chapters_to_process:
+            raise MangaMakerError("NO_CHAPTERS", "No chapters with content found to generate.", status_code=400)
+
+        built_by_id: dict[str, dict[str, Any]] = {}
+        errors_by_id: dict[str, str] = {}
+
+        def _build_one(ch: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+            ch_id = ch.get("chapter_id", "")
+            return ch_id, self._generate_chapter_no_save(story_id, ch_id, plot_outline, workspace, named_locs, loc_name_to_id)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_map = {executor.submit(_build_one, ch): ch for ch in chapters_to_process}
+            for future in concurrent.futures.as_completed(future_map):
+                ch = future_map[future]
+                ch_id = ch.get("chapter_id", "")
+                try:
+                    result_id, built = future.result()
+                    built_by_id[result_id] = built
+                except Exception as exc:
+                    logger.warning("[BATCH] chapter %s build failed: %s", ch_id, exc)
+                    errors_by_id[ch_id] = str(exc)
+
+        summary: list[dict[str, Any]] = []
+        for ch in chapters_to_process:
+            ch_id = ch.get("chapter_id", "")
+            if ch_id in errors_by_id:
+                summary.append({"chapter_id": ch_id, "status": "error", "error": errors_by_id[ch_id]})
+                continue
+            built = built_by_id.get(ch_id)
+            if not built:
+                summary.append({"chapter_id": ch_id, "status": "error", "error": "Build result missing"})
+                continue
+            try:
+                script_record, script = self._editable(story_id)
+                script.update({k: v for k, v in built.items() if not k.startswith("_")})
+                self._save(story_id, script_record, script)
+                approve_result = self.approve_script(story_id, chapter_id=ch_id)
+                try:
+                    candidate = version_service.create_simple_snapshot(story_id)
+                    version_id = candidate["version_id"]
+                    official = version_service.mark_official(story_id, version_id)
+                    approve_result["created_version_id"] = version_id
+                    approve_result["version_status"] = official.get("status", "official")
+                except Exception as exc:
+                    approve_result["version_error"] = str(exc)
+                summary.append({
+                    "chapter_id": ch_id,
+                    "status": "done",
+                    "llm_used": built.get("_llm_used", False),
+                    "llm_warnings": built.get("_llm_warnings", []),
+                    "pages_count": len(built.get("pages", [])),
+                    "scenes_used": built.get("_scenes_count", 0),
+                    **approve_result,
+                })
+            except Exception as exc:
+                logger.error("[BATCH] chapter %s write/approve failed: %s", ch_id, exc)
+                summary.append({"chapter_id": ch_id, "status": "error", "error": str(exc)})
+
+        return {
+            "chapters_processed": sum(1 for s in summary if s.get("status") == "done"),
+            "chapters_failed": sum(1 for s in summary if s.get("status") == "error"),
+            "results": summary,
         }
 
     # ── unlock helpers ────────────────────────────────────────────────────────
@@ -812,11 +1383,21 @@ class ChapterScriptService:
         char_rec = self.registry.get_current_file(script.get("story_id", story_id), "characters")
         characters_context: list[dict[str, Any]] = []
         if char_rec:
-            for p in char_rec.get("json_copy", {}).get("created_major_character_profiles", [])[:8]:
-                characters_context.append({
-                    "name": p.get("character_name", ""),
-                    "role": (p.get("character_role_level", {}) or {}).get("selected", "") if isinstance(p.get("character_role_level"), dict) else "",
-                })
+            json_copy = char_rec.get("json_copy", {})
+            for p in (json_copy.get("created_major_character_profiles", []) or [])[:20]:
+                name = p.get("character_name", "")
+                if name:
+                    characters_context.append({
+                        "name": name,
+                        "role": (p.get("character_role_level", {}) or {}).get("selected", "") if isinstance(p.get("character_role_level"), dict) else "",
+                    })
+            for p in (json_copy.get("created_side_character_profiles", []) or [])[:20]:
+                name = p.get("character_name", "")
+                if name:
+                    characters_context.append({
+                        "name": name,
+                        "role": (p.get("character_role_level", {}) or {}).get("selected", "Supporting Character"),
+                    })
 
         try:
             result = self.llm_service.generate_manga_script_panels(  # type: ignore[union-attr]

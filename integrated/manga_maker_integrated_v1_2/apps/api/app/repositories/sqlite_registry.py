@@ -378,6 +378,46 @@ class SQLiteRegistry:
                 (now, story_id),
             )
 
+    def resync_version_from_disk(self, story_id: str, version_id: str) -> dict[str, Any]:
+        """Re-read every file for this version from disk and update the registry json_copy cache.
+
+        Called automatically after mark_version_official() so the cache is always
+        consistent with what is actually on disk. Also exposed via the resync API endpoint
+        to recover from any manual edits or prior desyncs.
+        """
+        import hashlib
+        from datetime import datetime, timezone
+
+        rows = self.get_files_for_version(story_id, version_id)
+        synced: list[str] = []
+        skipped: list[str] = []
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self._connect() as conn:
+            for row in rows:
+                path = Path(row["storage_path"])
+                if not path.exists():
+                    skipped.append(row["file_type"])
+                    continue
+                text = path.read_text(encoding="utf-8")
+                data = json.loads(text)
+                checksum = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                conn.execute(
+                    """
+                    UPDATE story_files
+                    SET json_copy = ?, checksum = ?, updated_at = ?
+                    WHERE story_id = ? AND version_id = ? AND file_type = ?
+                    """,
+                    (json.dumps(data, ensure_ascii=False), checksum, now, story_id, version_id, row["file_type"]),
+                )
+                synced.append(row["file_type"])
+            conn.execute(
+                "UPDATE stories SET updated_at = ? WHERE story_id = ?",
+                (now, story_id),
+            )
+
+        return {"version_id": version_id, "synced": synced, "skipped": skipped}
+
 
     def get_story_events(self, story_id: str, workspace_id: str | None = None) -> list[dict[str, Any]]:
         with self._connect() as conn:

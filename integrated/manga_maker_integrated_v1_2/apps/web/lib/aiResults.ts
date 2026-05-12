@@ -62,7 +62,10 @@ export function normalizeAiGeneratedFields(page: string, targetFields: string[],
     if (gen.world_details && !gen.world_core_details) gen.world_core_details = gen.world_details;
     if (gen.world_build && !gen.world_core_details) gen.world_core_details = gen.world_build;
     if (gen.world_core && !gen.world_core_details) gen.world_core_details = gen.world_core;
-    if (!gen.world_core_details && (
+    // Treat empty {} the same as missing — LLM sometimes returns the key but leaves it empty
+    const wcd = gen.world_core_details;
+    const wcdIsEmpty = !wcd || (typeof wcd === "object" && !Array.isArray(wcd) && Object.keys(wcd).length === 0);
+    if (wcdIsEmpty && (
       gen.rule_details
       || gen.faction_details
       || gen.threat_details
@@ -78,6 +81,11 @@ export function normalizeAiGeneratedFields(page: string, targetFields: string[],
         major_factions_and_ruling_sides: gen.major_factions_and_ruling_sides,
         major_threats_and_minor_side_threats: gen.major_threats_and_minor_side_threats,
       };
+    }
+    // If faction_details landed in major_factions_and_ruling_sides instead of world_core_details, merge it in
+    const mfFactionDetails = gen.major_factions_and_ruling_sides?.faction_details;
+    if (mfFactionDetails && gen.world_core_details && !gen.world_core_details.faction_details) {
+      gen.world_core_details.faction_details = mfFactionDetails;
     }
   }
 

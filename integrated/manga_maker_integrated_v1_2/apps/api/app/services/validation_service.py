@@ -135,6 +135,84 @@ class ValidationService:
         if not isinstance(data.get("pages"), list):
             raise MangaMakerError("VALIDATION_ERROR", "chapter_script must contain pages array")
 
+    def validate_cross_references(self, files: dict[str, dict]) -> list[str]:
+        """Check cross-file ID references. Returns warning strings (does not raise).
+
+        Catches dangling IDs that accumulate when characters/locations/chapters are
+        deleted after downstream files (chapter_script, plot_outline) already reference them.
+        """
+        warnings: list[str] = []
+        char_data = files.get("characters") or {}
+        plot_data = files.get("plot_outline") or {}
+        script_data = files.get("chapter_script") or {}
+
+        # Build reference sets
+        major_profiles = char_data.get("created_major_character_profiles") or []
+        side_profiles = char_data.get("created_side_character_profiles") or []
+        profile_ids: set[str] = {p["profile_id"] for p in major_profiles + side_profiles if p.get("profile_id")}
+        profile_names: set[str] = {
+            (p.get("character_name") or "").strip().lower()
+            for p in major_profiles + side_profiles
+            if (p.get("character_name") or "").strip()
+        }
+
+        locs_block = plot_data.get("locations") or {}
+        location_ids: set[str] = {
+            l["location_id"]
+            for l in ((locs_block.get("locations") or []) if isinstance(locs_block, dict) else [])
+            if l.get("location_id")
+        }
+
+        chapters_block = (plot_data.get("chapter_or_episode_list") or {}).get("chapters") or []
+        chapter_ids: set[str] = {c["chapter_id"] for c in chapters_block if c.get("chapter_id")}
+
+        rel_ids: set[str] = {
+            r["relationship_id"]
+            for r in ((char_data.get("character_relationship_map") or {}).get("relationships") or [])
+            if r.get("relationship_id")
+        }
+
+        # chapter_script — panel location_id and dialogue speaker_id
+        for page in script_data.get("pages") or []:
+            for panel in page.get("panels") or []:
+                pid = panel.get("panel_id", "?")
+                loc_id = panel.get("location_id") or ""
+                if loc_id and loc_id not in location_ids:
+                    warnings.append(f"chapter_script panel {pid}: location_id={loc_id!r} not in locations")
+                for dlg in panel.get("dialogue") or []:
+                    spk = (dlg.get("speaker_id") or dlg.get("speaker") or "").strip()
+                    if spk and spk != "Narrator" and spk not in profile_ids and spk.lower() not in profile_names:
+                        warnings.append(f"chapter_script panel {pid}: speaker {spk!r} not in character profiles")
+
+        # plot_outline scene_cards — chapter_id and location_id
+        for scene in ((plot_data.get("scene_cards") or {}).get("scenes") or []):
+            sid = scene.get("scene_id", "?")
+            sc_ch = scene.get("chapter_id") or ""
+            if sc_ch and sc_ch not in chapter_ids:
+                warnings.append(f"plot_outline scene {sid}: chapter_id={sc_ch!r} not in chapter list")
+            sc_loc = scene.get("location_id") or ""
+            if sc_loc and sc_loc not in location_ids:
+                warnings.append(f"plot_outline scene {sid}: location_id={sc_loc!r} not in locations")
+
+        # plot_threads — character_id and relationship_id
+        threads = plot_data.get("plot_threads") or {}
+        for ct in threads.get("character_arc_threads") or []:
+            c_id = ct.get("character_id") or ""
+            if c_id and c_id not in profile_ids:
+                warnings.append(
+                    f"plot_outline character_arc_thread {ct.get('character_name', '?')!r}: "
+                    f"character_id={c_id!r} not in profiles"
+                )
+        for rt in threads.get("relationship_threads") or []:
+            r_id = rt.get("relationship_id") or ""
+            if r_id and r_id not in rel_ids:
+                warnings.append(
+                    f"plot_outline relationship_thread {rt.get('thread_title', '?')!r}: "
+                    f"relationship_id={r_id!r} not in relationship map"
+                )
+
+        return warnings
+
     def validate_content_safety(self, *, text: str, context: str = "free_writing") -> list[str]:
         warnings: list[str] = []
         if not text or not text.strip():

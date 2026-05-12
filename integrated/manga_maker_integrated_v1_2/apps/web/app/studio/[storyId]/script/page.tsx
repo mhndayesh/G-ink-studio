@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Panel } from "@/components/cards/Panel";
@@ -35,6 +35,7 @@ const PHASE_LABEL: Record<string, string> = {
 
 export default function ScriptPage() {
   const { storyId } = useParams<{ storyId: string }>();
+  const qc = useQueryClient();
   const [selectedChapterId, setSelectedChapterId] = useState("");
   const script = useQuery({
     queryKey: ["script", storyId, selectedChapterId],
@@ -46,7 +47,10 @@ export default function ScriptPage() {
     mutationFn: (chapterId: string = "") => api.generateChapterScript(storyId, chapterId),
     onSuccess: () => script.refetch(),
   });
-  const approve = useMutation({ mutationFn: () => api.approveChapterScript(storyId, selectedChapterId), onSuccess: () => script.refetch() });
+  const approve = useMutation({
+    mutationFn: () => api.approveChapterScript(storyId, selectedChapterId),
+    onSuccess: () => { script.refetch(); qc.invalidateQueries({ queryKey: ["status", storyId] }); },
+  });
   // NOTE(dev): extractEvents mutation disabled — the chapter-script event pipeline is orphaned.
   // detected_events_from_script are written to chapter_script.json but never consumed by
   // EventPatchService or VersionService. Event detection + versioning already happens via the
@@ -104,12 +108,10 @@ export default function ScriptPage() {
   const [showPurpose, setShowPurpose] = useState(false);
 
   // Generate-All batch state.
-  // The chapter_script.json file only holds ONE chapter at a time, so the only
-  // safe way to script every chapter is generate → approve (snapshot) → next.
-  // Approve writes the chapter into version history before the next generate
-  // overwrites the working slot, preserving every chapter in order.
-  type BatchPhase = "generating" | "approving" | "done" | "error";
-  const [batch, setBatch] = useState<{ current: number; total: number; chapterLabel: string; phase: BatchPhase; error?: string } | null>(null);
+  // All LLM calls run in parallel server-side (ThreadPoolExecutor), then chapters are
+  // written + approved + snapshotted sequentially. One HTTP call replaces the old loop.
+  type BatchPhase = "generating" | "done" | "error";
+  const [batch, setBatch] = useState<{ total: number; phase: BatchPhase; processed?: number; failed?: number; syncCount?: number; error?: string } | null>(null);
   const batchCancelRef = useRef<boolean>(false);
   const batchRunning = batch !== null && batch.phase !== "done" && batch.phase !== "error";
 
@@ -118,65 +120,28 @@ export default function ScriptPage() {
       alert("No chapters to script. Create chapters on Plot Board first.");
       return;
     }
-    // Sort by chapter_number, then skip chapters that are already approved
-    // (they're snapshotted in version history; regenerating them would discard
-    // user edits without warning). User can still hit Regenerate per chapter.
-    const ordered = [...chapters].sort((a: any, b: any) => (Number(a.chapter_number) || 0) - (Number(b.chapter_number) || 0));
-    const todo = ordered.filter((ch: any) => {
-      const st = statusMap[ch.chapter_id];
-      // Skip any chapter that has an approved snapshot in version history.
-      // It's "done"; regenerating would replace the working slot with a fresh AI draft.
-      return !(st?.has_script && st?.approved && !st?.is_current);
-    });
-    if (todo.length === 0) {
-      alert("Every chapter already has an approved script in version history.");
-      return;
-    }
-    const skipped = ordered.length - todo.length;
-    const ok = window.confirm(
-      `Generate scripts for ${todo.length} chapter${todo.length === 1 ? "" : "s"} in order, approving each before moving on?` +
-      (skipped > 0 ? `\n\n${skipped} chapter${skipped === 1 ? " is" : "s are"} already approved and will be skipped.` : "") +
-      "\n\nEach chapter is a separate AI call — this can take a while. Use Cancel to stop after the current step."
+    const todo = [...chapters].sort((a: any, b: any) => (Number(a.chapter_number) || 0) - (Number(b.chapter_number) || 0));
+    const confirmed = window.confirm(
+      `Regenerate ALL ${todo.length} chapter${todo.length === 1 ? "" : "s"} in parallel?\n\nAll LLM calls run concurrently on the server — much faster than one-by-one.\nThis overwrites every existing script, including already-approved chapters.`
     );
-    if (!ok) return;
+    if (!confirmed) return;
 
     batchCancelRef.current = false;
-    let i = 0;
-    for (const ch of todo) {
-      i += 1;
-      if (batchCancelRef.current) break;
-      const label = `Ch.${ch.chapter_number} — ${ch.chapter_title || "Untitled"}`;
-      setBatch({ current: i, total: todo.length, chapterLabel: label, phase: "generating" });
-      // Make the working slot show this chapter while it generates.
-      setSelectedChapterId(ch.chapter_id);
-      try {
-        await api.generateChapterScript(storyId, ch.chapter_id);
-      } catch (err: any) {
-        setBatch({ current: i, total: todo.length, chapterLabel: label, phase: "error", error: `Generation failed: ${err?.message || "unknown error"}` });
-        await chaptersStatus.refetch();
-        await script.refetch();
-        return;
+    setBatch({ total: todo.length, phase: "generating" });
+    try {
+      const result = await api.generateBatchApprove(storyId, todo.map((ch: any) => ch.chapter_id));
+      const done = result.chapters_processed || 0;
+      const failed = result.chapters_failed || 0;
+      if (failed > 0) {
+        setBatch({ total: todo.length, phase: "error", processed: done, failed, error: `${done} succeeded, ${failed} failed — check the browser console for details.` });
+      } else {
+        setBatch({ total: todo.length, phase: "done", processed: done, syncCount: result.sync_count });
       }
-      if (batchCancelRef.current) break;
-      setBatch({ current: i, total: todo.length, chapterLabel: label, phase: "approving" });
-      try {
-        await api.approveChapterScript(storyId, ch.chapter_id);
-      } catch (err: any) {
-        setBatch({ current: i, total: todo.length, chapterLabel: label, phase: "error", error: `Approve failed (script is still in working slot — fix manually): ${err?.message || "unknown error"}` });
-        await chaptersStatus.refetch();
-        await script.refetch();
-        return;
-      }
-      // Refresh chapters-status so the dropdown badges update live.
+    } catch (err: any) {
+      setBatch({ total: todo.length, phase: "error", error: err?.message || "Batch generation failed" });
+    } finally {
       await chaptersStatus.refetch();
-    }
-    setBatch({ current: todo.length, total: todo.length, chapterLabel: "", phase: "done" });
-    await script.refetch();
-  }
-
-  function cancelBatch() {
-    if (batch && batch.phase !== "done" && batch.phase !== "error") {
-      batchCancelRef.current = true;
+      await script.refetch();
     }
   }
 
@@ -211,44 +176,28 @@ export default function ScriptPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className={`rounded-md px-2 py-1 text-xs font-black uppercase tracking-wide text-white ${batch.phase === "error" ? "bg-rose-700" : batch.phase === "done" ? "bg-emerald-700" : "bg-violet-700"}`}>
-                  {batch.phase === "done" ? "Done" : batch.phase === "error" ? "Stopped" : `Step ${batch.current}/${batch.total}`}
+                  {batch.phase === "done" ? "Done" : batch.phase === "error" ? "Error" : "Running"}
                 </span>
                 <span className="text-sm font-bold">
                   {batch.phase === "done"
-                    ? `Generated and approved ${batch.total} chapter${batch.total === 1 ? "" : "s"}.`
+                    ? `Generated & approved ${batch.processed ?? batch.total} chapter${(batch.processed ?? batch.total) === 1 ? "" : "s"}.${batch.syncCount ? ` Created ${batch.syncCount} speaker stub${batch.syncCount === 1 ? "" : "s"}.` : ""}`
                     : batch.phase === "error"
-                    ? batch.error || "Stopped."
-                    : batch.phase === "generating"
-                    ? `Generating ${batch.chapterLabel}…`
-                    : `Approving ${batch.chapterLabel}…`}
+                    ? batch.error || "Generation failed."
+                    : `Generating all ${batch.total} chapters in parallel… (LLM calls run concurrently)`}
                 </span>
               </div>
-              <div className="flex gap-2">
-                {batchRunning && (
-                  <button
-                    className="rounded-lg border-2 border-amber-600 bg-amber-50 px-3 py-1 text-xs font-black text-amber-800 hover:bg-amber-100 disabled:opacity-40"
-                    onClick={cancelBatch}
-                    disabled={batchCancelRef.current}
-                  >
-                    {batchCancelRef.current ? "Cancelling after current step…" : "Cancel"}
-                  </button>
-                )}
-                {!batchRunning && (
-                  <button
-                    className="rounded-lg border-2 border-slate-400 bg-white px-3 py-1 text-xs font-black text-slate-600"
-                    onClick={dismissBatch}
-                  >
-                    Dismiss
-                  </button>
-                )}
-              </div>
+              {!batchRunning && (
+                <button
+                  className="rounded-lg border-2 border-slate-400 bg-white px-3 py-1 text-xs font-black text-slate-600"
+                  onClick={dismissBatch}
+                >
+                  Dismiss
+                </button>
+              )}
             </div>
             {batchRunning && (
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-violet-200">
-                <div
-                  className="h-full bg-violet-600 transition-all"
-                  style={{ width: `${(batch.current / Math.max(1, batch.total)) * 100}%` }}
-                />
+                <div className="h-full bg-violet-600 animate-pulse w-full" />
               </div>
             )}
           </div>

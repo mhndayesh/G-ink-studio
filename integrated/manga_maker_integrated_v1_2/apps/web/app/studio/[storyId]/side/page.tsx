@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { AI_EMPTY_MESSAGE, getUsableAiOutput } from "@/lib/aiResults";
 import { Panel } from "@/components/cards/Panel";
 import { Field } from "@/components/forms/Field";
-import { ProfileTabs } from "@/components/forms/ProfileTabs";
+import { ProfileTabs, PROFILE_OPTS } from "@/components/forms/ProfileTabs";
 import { AiFillPanel } from "@/components/forms/AiFillPanel";
 import { StructuredJsonView } from "@/components/cards/StructuredJsonView";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -54,16 +54,27 @@ export default function SideCastPage() {
   const [aiSideResults, setAiSideResults] = useState<Record<string, any> | null>(null);
   const [aiSideError, setAiSideError] = useState<string | null>(null);
   const [aiApplyCounter, setAiApplyCounter] = useState(0);
+  const [charNotes, setCharNotes] = useState("");
   const sideProfiles = content.created_side_character_profiles || [];
   const majorCount = content.created_major_character_profiles_count || 0;
 
   const aiGen = useMutation({
-    mutationFn: () => api.aiGenerate(storyId, {
-      page: "side",
-      target_fields: aiSideFields,
-      partial_input: { ...profileData, profile_id: editingProfileId, character_name: name },
-      generation_hints: { edit_existing: true, profile_id: editingProfileId, character_name: name },
-    }),
+    mutationFn: () => {
+      const opts: Record<string, string[]> = {};
+      if (aiSideFields.includes("status_role")) { opts.status_options = PROFILE_OPTS.STATUS_OPTS; opts.role_options = PROFILE_OPTS.ROLE_OPTS; }
+      if (aiSideFields.includes("appearance")) opts.visual_style_options = PROFILE_OPTS.VISUAL_STYLE_OPTS;
+      if (aiSideFields.includes("faction")) opts.faction_alignment_options = PROFILE_OPTS.FACTION_ALIGN_OPTS;
+      if (aiSideFields.includes("backstory")) { opts.backstory_type_options = PROFILE_OPTS.BACKSTORY_OPTS; opts.mental_state_options = PROFILE_OPTS.MENTAL_STATE_OPTS; opts.community_place_options = PROFILE_OPTS.COMMUNITY_OPTS; }
+      if (aiSideFields.includes("personality")) opts.personality_type_options = PROFILE_OPTS.PERSONALITY_OPTS;
+      const hints: any = { edit_existing: true, profile_id: editingProfileId, character_name: name };
+      if (charNotes.trim()) hints.user_character_notes = charNotes.trim();
+      return api.aiGenerate(storyId, {
+        page: "side",
+        target_fields: aiSideFields,
+        partial_input: { ...profileData, profile_id: editingProfileId, character_name: name, ...opts },
+        generation_hints: hints,
+      });
+    },
     onSuccess: (d: any) => {
       let gen: Record<string, any>;
       try {
@@ -84,12 +95,12 @@ export default function SideCastPage() {
 
   const createSide = useMutation({
     mutationFn: (body: any) => api.createSideCharacterProfile(storyId, body),
-    onSuccess: () => { chars.refetch(); setName(""); setProfileData({}); setEditingIdx(null); setEditingProfileId(null); },
+    onSuccess: () => { chars.refetch(); setName(""); setProfileData({}); setEditingIdx(null); setEditingProfileId(null); setCharNotes(""); },
   });
 
   const updateSide = useMutation({
     mutationFn: ({ profileId, body }: { profileId: string; body: any }) => api.updateSideCharacterProfile(storyId, profileId, body),
-    onSuccess: () => { chars.refetch(); setName(""); setProfileData({}); setEditingIdx(null); setEditingProfileId(null); },
+    onSuccess: () => { chars.refetch(); setName(""); setProfileData({}); setEditingIdx(null); setEditingProfileId(null); setCharNotes(""); },
   });
 
   const deleteSideMut = useMutation({
@@ -106,6 +117,15 @@ export default function SideCastPage() {
 
   const conflictCheck = useMutation({
     mutationFn: ({ profileId, newName }: { profileId: string; newName: string }) => api.checkCharacterConflicts(storyId, profileId, newName),
+  });
+
+  const [syncResult, setSyncResult] = useState<{ created: string[]; count: number } | null>(null);
+  const syncSpeakers = useMutation({
+    mutationFn: () => api.syncScriptSpeakers(storyId),
+    onSuccess: (d: any) => {
+      chars.refetch();
+      setSyncResult({ created: d.created || [], count: d.count || 0 });
+    },
   });
 
   function handleApplyEi(results: any) {
@@ -151,15 +171,36 @@ export default function SideCastPage() {
     setEditingProfileId(null);
     setName("");
     setProfileData({});
+    setCharNotes("");
   }
 
   return (
     <div className="grid gap-4 sm:gap-5 lg:grid-cols-[1.1fr_0.9fr]">
       <Panel title="Side Cast" subtitle="Supporting characters, minor roles, NPCs, and extras.">
-        <div className="mb-4 flex items-center gap-3 text-sm">
+        <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
           <span className="font-bold">Major: <span className="text-amber-700">{majorCount}</span></span>
           <span className="font-bold">Side: <span className="text-indigo-600">{sideProfiles.length}</span></span>
+          <button
+            className="ml-auto rounded-xl border-2 border-indigo-600 bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+            onClick={() => {
+              if (!confirm("Scan all chapter scripts and create stub side profiles for any speaker without one?\n\nSafe to run multiple times — existing profiles are never overwritten.")) return;
+              setSyncResult(null);
+              syncSpeakers.mutate();
+            }}
+            disabled={syncSpeakers.isPending}
+            title="Create stub side profiles for every script speaker that has no profile yet"
+          >
+            {syncSpeakers.isPending ? "Scanning…" : "⚡ Sync Script Speakers"}
+          </button>
         </div>
+        {syncResult && (
+          <div className={`mb-3 rounded-xl border-2 p-3 text-xs ${syncResult.count > 0 ? "border-emerald-400 bg-emerald-50 text-emerald-800" : "border-slate-300 bg-slate-50 text-slate-600"}`}>
+            {syncResult.count > 0
+              ? `Created ${syncResult.count} stub profile(s): ${syncResult.created.join(", ")}. AI-fill each one to flesh it out.`
+              : "All script speakers already have profiles — nothing to create."}
+          </div>
+        )}
+        {syncSpeakers.isError && <div className="mb-3 text-xs text-red-700 font-bold">Sync failed — check backend logs.</div>}
 
         {sideProfiles.length > 0 && (
           <div className="mb-5 space-y-2">
@@ -183,6 +224,18 @@ export default function SideCastPage() {
           <h3 className="font-black text-sm">{editingIdx !== null ? "Edit Side Character" : "Add Side Character"}</h3>
           {(editingIdx !== null) && (
             <button onClick={handleCancel} className="text-xs font-bold text-slate-500 underline">Cancel editing</button>
+          )}
+          {editingIdx !== null && (
+            <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 sm:rounded-2xl">
+              <Field
+                label="Notes / hints to AI"
+                value={charNotes}
+                onChange={setCharNotes}
+                textarea
+                placeholder="e.g. 'a grumpy old landlord who secretly protects the protagonist, comedic but has a hidden past'"
+              />
+              <p className="mt-1 text-xs text-amber-700 font-bold">These notes are sent to AI with every field generation — describe the character's role, personality, or anything you have in mind.</p>
+            </div>
           )}
           {editingIdx !== null && (
             <AiFillPanel

@@ -299,7 +299,10 @@ class VersionService:
             raise MangaMakerError("VERSION_INCOMPLETE", "Cannot mark version official; files are missing.", details={"missing": missing})
         now = datetime.now(timezone.utc).isoformat()
         self.registry.mark_version_official(story_id=story_id, version_id=version_id, now=now)
-        
+        # Always re-read every file from disk after marking official so the registry
+        # json_copy cache is guaranteed to match what is on disk.
+        self.registry.resync_version_from_disk(story_id, version_id)
+
         graph_sync = None
         vector_sync = None
         continuity_sync = None
@@ -331,6 +334,18 @@ class VersionService:
             "vector_sync": vector_sync,
             "continuity_sync": continuity_sync
         }
+
+    def resync_current_version(self, story_id: str) -> dict[str, Any]:
+        """Re-read all files for the current version from disk into the registry cache.
+
+        Recovers from any desync caused by manual disk edits, interrupted saves, or
+        prior bugs. Also callable via the API endpoint for manual recovery.
+        """
+        story = self.registry.get_story(story_id)
+        if not story:
+            raise MangaMakerError("STORY_NOT_FOUND", f"Story {story_id} not found", status_code=404)
+        result = self.registry.resync_version_from_disk(story_id, story["current_version_id"])
+        return {"story_id": story_id, **result}
 
     def _record(self, story_id: str, version_id: str, ft: str, filename: str, path: str, data: dict[str, Any], checksum: str) -> dict[str, Any]:
         return {

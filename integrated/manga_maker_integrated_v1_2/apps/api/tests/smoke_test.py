@@ -437,6 +437,13 @@ def main() -> None:
     script_chapter_id = client.get(f"/api/v1/stories/{story_id}/chapter-script?chapter_id=ch_001").text
     assert_true("ch_001" in script_chapter_id or "still alive" in script_chapter_id, "chapter-script should accept chapter_id param")
 
+    # Locations gate (audit fix): chapter-script generation requires at least one named location.
+    create_loc = client.post(
+        f"/api/v1/stories/{story_id}/locations",
+        json={"name": "Academy Gate", "type": "Exterior / Landmark", "description": "Stone arch with glowing runes."},
+    )
+    assert_true(create_loc.status_code == 200, create_loc.text)
+
     script_generate = client.post(f"/api/v1/stories/{story_id}/chapter-script/generate?chapter_id=ch_001")
     assert_true(script_generate.status_code == 200, script_generate.text)
     assert_true(script_generate.json()["data"]["pages_count"] >= 1, "script generation should create at least one page")
@@ -551,6 +558,68 @@ def main() -> None:
     assert_true(v001_manifest.json()["data"]["version_id"] == "v001", "v001 manifest should still be accessible")
     assert_true(v001_manifest.json()["data"]["files"]["plot_outline"] == "plot_outline.json", "manifest plot filename mismatch")
 
+    # Locations CRUD checks.
+    locs_empty = client.get(f"/api/v1/stories/{story_id}/locations")
+    assert_true(locs_empty.status_code == 200, locs_empty.text)
+    assert_true(isinstance(locs_empty.json()["data"], list), "locations list should return a JSON array in data")
+
+    loc_create = client.post(f"/api/v1/stories/{story_id}/locations", json={
+        "name": "Academy Courtyard",
+        "type": "Exterior / School",
+        "description": "Open courtyard below the academy bell tower.",
+        "positive_prompt": "manga school courtyard, stone paving, cherry trees, soft daylight",
+        "negative_prompt": "indoor, dark, modern city",
+    })
+    assert_true(loc_create.status_code == 200, loc_create.text)
+    loc_data = loc_create.json()["data"]
+    loc_id = loc_data.get("location_id")
+    assert_true(loc_id and loc_id.startswith("loc_"), f"location_id should start with loc_, got {loc_id}")
+    assert_true(loc_data.get("name") == "Academy Courtyard", "location name mismatch")
+
+    loc_list = client.get(f"/api/v1/stories/{story_id}/locations")
+    assert_true(loc_list.status_code == 200, loc_list.text)
+    assert_true(len(loc_list.json()["data"]) >= 1, "locations list should have at least 1 entry after create")
+
+    loc_update = client.patch(f"/api/v1/stories/{story_id}/locations/{loc_id}", json={
+        "description": "Open courtyard below the cracked academy bell tower with a glowing seal.",
+    })
+    assert_true(loc_update.status_code == 200, loc_update.text)
+    assert_true("glowing seal" in loc_update.json()["data"].get("description", ""), "location description should be updated")
+
+    # Export triple-zip check.
+    export_triple = client.get(f"/api/v1/stories/{story_id}/export/triple-zip")
+    assert_true(export_triple.status_code == 200, export_triple.text)
+    assert_true("application/zip" in export_triple.headers.get("content-type", ""), "triple-zip should be application/zip")
+    with _zipfile.ZipFile(_io.BytesIO(export_triple.content)) as zf:
+        triple_names = set(zf.namelist())
+    assert_true("README.md" in triple_names, "triple-zip should include README.md")
+    story_files = [n for n in triple_names if n.endswith("-story.md")]
+    visuals_files = [n for n in triple_names if n.endswith("-visuals.md")]
+    scenes_files = [n for n in triple_names if n.endswith("-scenes.md")]
+    assert_true(len(story_files) == 1, f"triple-zip should include one *-story.md, got {triple_names}")
+    assert_true(len(visuals_files) == 1, f"triple-zip should include one *-visuals.md, got {triple_names}")
+    assert_true(len(scenes_files) == 1, f"triple-zip should include one *-scenes.md, got {triple_names}")
+    # Verify CHAPTERS section present in visuals file
+    with _zipfile.ZipFile(_io.BytesIO(export_triple.content)) as zf:
+        visuals_text = zf.read(visuals_files[0]).decode("utf-8")
+        story_text = zf.read(story_files[0]).decode("utf-8")
+    assert_true("CHAPTERS" in visuals_text, "visuals export should contain CHAPTERS section")
+    assert_true("Manga Maker System" in story_text, "story export should contain story title")
+
+    # Export validation endpoint check.
+    export_validate = client.get(f"/api/v1/stories/{story_id}/export/validate")
+    assert_true(export_validate.status_code == 200, export_validate.text)
+    validate_data = export_validate.json().get("data", {})
+    assert_true(isinstance(validate_data.get("warnings"), list), "export/validate should return warnings list")
+    assert_true(isinstance(validate_data.get("count"), int), "export/validate should return integer count")
+
+    # Location delete check (clean up after export so it's tested).
+    loc_delete = client.delete(f"/api/v1/stories/{story_id}/locations/{loc_id}")
+    assert_true(loc_delete.status_code == 200, loc_delete.text)
+    loc_list_after = client.get(f"/api/v1/stories/{story_id}/locations")
+    remaining_ids = [l.get("location_id") for l in loc_list_after.json()["data"]]
+    assert_true(loc_id not in remaining_ids, f"deleted location {loc_id} should not appear in list after delete")
+
     report = {
         "passed": True,
         "story_id": story_id,
@@ -629,6 +698,15 @@ def main() -> None:
             "export/scenes md download",
             "export/visuals md download",
             "export/raw-zip contains all 6 story files",
+            "locations list endpoint",
+            "location create with loc_ prefixed id",
+            "location list after create",
+            "location update endpoint",
+            "export/triple-zip contains story + visuals + scenes md files",
+            "triple-zip visuals contains CHAPTERS section",
+            "triple-zip story contains story title",
+            "export/validate endpoint returns warnings list and count",
+            "location delete endpoint",
         ]
     }
     print(json.dumps(report, indent=2), flush=True)

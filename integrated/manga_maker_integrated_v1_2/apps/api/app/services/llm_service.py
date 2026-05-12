@@ -176,6 +176,7 @@ class LLMService:
             ],
         }
 
+        allowed_speakers = [c["name"] for c in characters_context if c.get("name")]
         input_payload = {
             "task": "manga_script_panel_generation",
             "chapter": {
@@ -190,8 +191,18 @@ class LLMService:
             "scenes": compact_scenes,
             "workspace_text": final_text[:800],
             "plot_threads": compact_threads,
-            "characters": characters_context[:8],
+            "characters": characters_context,
+            "allowed_speakers": allowed_speakers,
         }
+        speaker_rule = (
+            f"IMPORTANT — speaker_name in every dialogue entry MUST be exactly one of these names: "
+            f"{allowed_speakers}. "
+            "You may also use 'Narrator' for caption/narration text. "
+            "For unnamed background extras use 'Background Character'. "
+            "Do NOT invent any other speaker names."
+        ) if allowed_speakers else (
+            "Use 'Narrator' for narration text and 'Background Character' for unnamed extras."
+        )
         system = (
             "You are the Manga Maker panel script generator. "
             "Given a chapter's scene cards, generate creative and detailed manga panel content for each page. "
@@ -213,6 +224,7 @@ class LLMService:
             "Panel 2: core conflict/action. Panel 3: reaction/revelation. Panel 4: ending hook/cliffhanger. "
             "Keep dialogue short (under 20 words per bubble). "
             "Use the scene's visual_manga_moment, conflict, and ending_beat to drive panel content. "
+            f"{speaker_rule} "
             "Do not generate violent, explicit, or harmful content. Keep output general-audience manga."
         )
         user = json.dumps(input_payload, ensure_ascii=False)
@@ -328,12 +340,13 @@ class LLMService:
         self,
         *,
         story_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         run_type: str,
         input_payload: dict[str, Any],
         system_prompt: str,
         user_prompt: str,
         fallback: dict[str, Any],
+        timeout_override: float | None = None,
     ) -> LLMResult:
         now = datetime.now(timezone.utc).isoformat()
         run_id = f"llm_{uuid4().hex[:12]}"
@@ -362,7 +375,7 @@ class LLMService:
 
         try:
             logger.info("[LLM REQUEST] run_id=%s calling real LLM url=%s model=%s", run_id, self.settings.openai_base_url, self.settings.openai_model)
-            output = self._openai_responses_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            output = self._openai_responses_json(system_prompt=system_prompt, user_prompt=user_prompt, timeout=timeout_override)
             logger.info("[LLM SUCCESS] run_id=%s output_keys=%s", run_id, list(output.keys()))
             self.registry.create_llm_run({
                 "llm_run_id": run_id,
@@ -400,7 +413,7 @@ class LLMService:
             })
             return LLMResult("deterministic_fallback", self.settings.openai_model, True, output, output.get("warnings", []), run_id)
 
-    def _openai_responses_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def _openai_responses_json(self, *, system_prompt: str, user_prompt: str, timeout: float | None = None) -> dict[str, Any]:
         key = self.settings.openai_api_key.get_secret_value() if self.settings.openai_api_key else ""
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         payload = {
@@ -411,8 +424,9 @@ class LLMService:
             ],
         }
         url = self.settings.openai_base_url.rstrip("/") + "/chat/completions"
-        logger.info("[LLM HTTP] POST %s model=%s timeout=%s", url, self.settings.openai_model, self.settings.llm_timeout_seconds)
-        with httpx.Client(timeout=self.settings.llm_timeout_seconds) as client:
+        actual_timeout = timeout if timeout is not None else self.settings.llm_timeout_seconds
+        logger.info("[LLM HTTP] POST %s model=%s timeout=%s", url, self.settings.openai_model, actual_timeout)
+        with httpx.Client(timeout=actual_timeout) as client:
             response = client.post(url, headers=headers, json=payload)
             logger.info("[LLM HTTP] response status=%s", response.status_code)
             response.raise_for_status()
@@ -451,29 +465,29 @@ class LLMService:
     def _build_field_schema(self, page: str, target_fields: list[str]) -> str:
         schemas: dict[str, dict[str, str]] = {
             "cast": {
-                "status_role": "status(selected|10 options:alive/dead/missing/...), status.custom_status, character_role_level(selected|12 options:Primary Main Character/...), custom_character_role_level",
-                "appearance": "selected_visual_style, age_range, gender_presentation, height, body_type, silhouette_shape, face_shape, skin_tone_or_markings, hair_style, hair_color, eye_shape, eye_color, distinctive_features[], scars_or_birthmarks[], clothing_style, main_outfit_description, alternate_outfits[], accessories[], weapons_or_tools_visible[], iconic_item, color_palette[], visual_symbol_or_motif, visual_contrast_with_other_characters, expression_style, pose_language, manga_panel_presence, first_impression_visual, how_design_reflects_personality, how_design_reflects_backstory, how_design_reflects_power_or_role, ai_image_prompt_notes, negative_prompt_notes, custom_visual_design_details",
-                "faction": "selected(22 alignment options), custom_alignment_type, alignment_details{ linked_master_faction, linked_custom_master_faction, character_specific_faction_name, character_specific_faction_type, character_specific_group_members[], character_role_in_faction, loyalty_level, reason_for_following_this_side, what_the_faction_wants_from_character, what_character_wants_from_faction, conflict_with_faction, can_change_sides, side_change_trigger, hidden_allegiance, public_allegiance, custom_alignment_details }",
-                "backstory": "sub-section backstory{ birthplace, family_situation, parent_or_guardian_status, childhood_summary, important_past_event, past_trauma_or_wound, past_failure, past_success, secret_from_past, what_the_character_lost, what_the_character_gained, who_helped_them_before_story, who_hurt_them_before_story, how_backstory_connects_to_master_world, how_backstory_connects_to_master_factions, how_backstory_connects_to_major_threat, custom_backstory_details }, sub-section mental_state{ current_emotional_state, main_fear, main_desire, inner_need, outer_goal, biggest_strength, biggest_flaw, fatal_flaw, emotional_wound, coping_mechanism, trigger_points[], trust_level, anger_level, confidence_level, self_control_level, risk_tolerance, how_they_handle_conflict, how_they_handle_loss, how_they_handle_power, custom_mental_state_details }, sub-section community_place{ community_name, social_class, public_reputation, private_reputation, how_people_treat_them, who_respects_them[], who_hates_them[], who_protects_them[], who_uses_them[], responsibilities_in_community, rights_or_privileges, restrictions_or_limits, community_expectations, reason_for_current_status, does_character_want_to_change_status, desired_new_status, custom_community_place_details }",
-                "personality": "selected_personality_types[](39 options), personality_details{ core_traits[], positive_traits[], negative_traits[], public_personality, private_personality, personality_mask, true_self, behavior_when_safe, behavior_when_threatened, behavior_under_pressure, speech_style, humor_style, intelligence_style, social_style, leadership_style, morality_style, decision_making_style, conflict_style, relationship_style, trust_style, habit_or_quirk, pet_peeves[], likes[], dislikes[], biggest_personality_flaw, personality_contradiction, how_personality_connects_to_backstory, how_personality_affects_faction_alignment, how_personality_affects_main_goal, personality_change_arc, custom_personality_details }",
-                "powers": "is_enabled(bool), selected_power_origin(22 options), custom_power_origin, selected_power_type(44 options), custom_power_type, selected_power_level(26 options), custom_power_level, reason_if_disabled, power_details{ power_name, power_description, how_power_manifests, visual_style_when_used, main_abilities[], secondary_abilities[], passive_abilities[], ultimate_ability, power_source, power_cost, power_limitations, weaknesses[], forbidden_use, training_needed, control_level, current_mastery_level, growth_potential, risk_to_user, risk_to_others, how_power_connects_to_backstory, how_power_connects_to_faction, how_power_connects_to_major_threat, does_character_hide_power, why_power_is_hidden, is_power_rare_in_world, who_else_has_similar_power[], custom_power_details }",
-                "arc": "sub-section arc_details{ selected_arc_type, custom_arc_type, starting_belief, false_belief_or_lie, truth_they_must_learn, personal_goal, inner_need, outer_goal, main_internal_conflict, main_external_conflict, what_forces_them_to_change, lowest_point, turning_point, final_state, custom_arc_details }, sub-section threat_connection{ linked_major_threat, linked_minor_threats[], why_character_cares_about_threat, how_personal_goal_clashes_with_major_threat, how_major_threat_blocks_character_goal, how_character_can_damage_or_stop_threat, how_threat_can_break_character, personal_stakes_if_threat_wins, community_stakes_if_threat_wins, faction_stakes_if_threat_wins, world_stakes_if_threat_wins, final_conflict_role, custom_threat_connection_details }",
+                "status_role": "status{ selected(choose from status_options in partial_input), custom_status }, character_role_level{ selected(choose from role_options in partial_input), custom_character_role_level }",
+                "appearance": "selected_visual_style(choose from visual_style_options in partial_input), appearance_details{ age_range, gender_presentation, height, body_type, silhouette_shape, face_shape, skin_tone_or_markings, hair_style, hair_color, eye_shape, eye_color, distinctive_features[], scars_or_birthmarks[], clothing_style, main_outfit_description, alternate_outfits[], accessories[], weapons_or_tools_visible[], iconic_item, color_palette[], visual_symbol_or_motif, expression_style, pose_language, manga_panel_presence, first_impression_visual, how_design_reflects_personality, how_design_reflects_backstory, how_design_reflects_power_or_role, ai_image_prompt_notes, negative_prompt_notes }",
+                "faction": "selected(choose from faction_alignment_options in partial_input), custom_alignment_type, alignment_details{ linked_master_faction, character_role_in_faction, loyalty_level, reason_for_following_this_side, what_the_faction_wants_from_character, what_character_wants_from_faction, conflict_with_faction, can_change_sides, side_change_trigger, hidden_allegiance, public_allegiance }",
+                "backstory": "selected_backstory_type(choose from backstory_type_options), selected_mental_state(choose from mental_state_options), selected_community_place(choose from community_place_options), backstory_details{ birthplace, family_situation, childhood_summary, important_past_event, past_trauma_or_wound, past_failure, past_success, secret_from_past, what_the_character_lost, what_the_character_gained, how_backstory_connects_to_master_world, how_backstory_connects_to_master_factions, how_backstory_connects_to_major_threat }, mental_state_details{ current_emotional_state, main_fear, main_desire, inner_need, outer_goal, biggest_strength, biggest_flaw, fatal_flaw, emotional_wound, coping_mechanism }, community_place_details{ community_name, social_class, public_reputation, how_people_treat_them, responsibilities_in_community, desired_new_status }",
+                "personality": "selected_personality_types[](choose 2-5 from personality_type_options), personality_details{ core_traits[], positive_traits[], negative_traits[], public_personality, private_personality, true_self, behavior_when_safe, behavior_when_threatened, behavior_under_pressure, speech_style, humor_style, habit_or_quirk, biggest_personality_flaw, personality_contradiction, personality_change_arc }",
+                "powers": "is_enabled(bool), selected_power_origin(choose from power_origin_options), selected_power_type(choose from power_type_options), selected_power_level(choose from power_level_options), power_details{ power_name, power_description, how_power_manifests, visual_style_when_used, main_abilities[], ultimate_ability, power_source, power_cost, power_limitations, weaknesses[], control_level, growth_potential, risk_to_user, how_power_connects_to_backstory, how_power_connects_to_faction, how_power_connects_to_major_threat }",
+                "arc": "selected_arc_type(choose from arc_type_options), arc_details{ starting_belief, false_belief_or_lie, truth_they_must_learn, personal_goal, main_internal_conflict, main_external_conflict, what_forces_them_to_change, lowest_point, turning_point, final_state }, threat_connection_details{ linked_major_threat, why_character_cares_about_threat, how_major_threat_blocks_character_goal, how_character_can_damage_or_stop_threat, how_threat_can_break_character, personal_stakes_if_threat_wins, final_conflict_role }",
             },
             "side": {
-                "status_role": "character_role_level.selected(12 options), character_role_level.custom_character_role_level, status.selected(10 options), status.custom_status",
-                "appearance": "appearance_and_visual_design.appearance_details{ age_range, gender_presentation, height, body_type, silhouette_shape, face_shape, skin_tone_or_markings, hair_style, hair_color, eye_shape, eye_color, distinctive_features[], scars_or_birthmarks[], clothing_style, main_outfit_description, alternate_outfits[], accessories[], weapons_or_tools_visible[], iconic_item, color_palette[], visual_symbol_or_motif, visual_contrast_with_other_characters, expression_style, pose_language, manga_panel_presence, first_impression_visual, how_design_reflects_personality, how_design_reflects_backstory, how_design_reflects_power_or_role, ai_image_prompt_notes, negative_prompt_notes, custom_visual_design_details }",
-                "faction": "main_character_faction_alignment{ selected(22 alignment options), custom_alignment_type, alignment_details{ linked_master_faction, linked_custom_master_faction, character_specific_faction_name, character_specific_faction_type, character_specific_group_members[], character_role_in_faction, loyalty_level, reason_for_following_this_side, what_the_faction_wants_from_character, what_character_wants_from_faction, conflict_with_faction, can_change_sides, side_change_trigger, hidden_allegiance, public_allegiance, custom_alignment_details } }",
-                "backstory": "character_backstory_mental_state_and_community_place.backstory_details{ birthplace, family_situation, parent_or_guardian_status, childhood_summary, important_past_event, past_trauma_or_wound, past_failure, past_success, secret_from_past, what_the_character_lost, what_the_character_gained, who_helped_them_before_story, who_hurt_them_before_story, how_backstory_connects_to_master_world, how_backstory_connects_to_master_factions, how_backstory_connects_to_major_threat, custom_backstory_details }",
-                "personality": "character_personality{ selected_personality_types[](39 options), personality_details{ core_traits[], positive_traits[], negative_traits[], public_personality, private_personality, personality_mask, true_self, behavior_when_safe, behavior_when_threatened, behavior_under_pressure, speech_style, humor_style, intelligence_style, social_style, leadership_style, morality_style, decision_making_style, conflict_style, relationship_style, trust_style, habit_or_quirk, pet_peeves[], likes[], dislikes[], biggest_personality_flaw, personality_contradiction, how_personality_connects_to_backstory, how_personality_affects_faction_alignment, how_personality_affects_main_goal, personality_change_arc, custom_personality_details } }",
+                "status_role": "character_role_level{ selected(choose from role_options in partial_input), custom_character_role_level }, status{ selected(choose from status_options in partial_input), custom_status }",
+                "appearance": "appearance_and_visual_design{ selected_visual_style(choose from visual_style_options), appearance_details{ age_range, gender_presentation, height, body_type, hair_style, hair_color, eye_color, clothing_style, main_outfit_description, ai_image_prompt_notes, negative_prompt_notes } }",
+                "faction": "main_character_faction_alignment{ selected(choose from faction_alignment_options), custom_alignment_type, alignment_details{ linked_master_faction, character_role_in_faction, loyalty_level, reason_for_following_this_side } }",
+                "backstory": "character_backstory_mental_state_and_community_place{ selected_backstory_type(choose from backstory_type_options), selected_mental_state(choose from mental_state_options), selected_community_place(choose from community_place_options), backstory_details{ birthplace, family_situation, childhood_summary, important_past_event, past_trauma_or_wound, how_backstory_connects_to_master_world }, mental_state_details{ main_fear, main_desire, biggest_flaw } }",
+                "personality": "character_personality{ selected_personality_types[](choose 2-4 from personality_type_options), personality_details{ public_personality, speech_style, habit_or_quirk } }",
             },
             "board": {
-                "arc_overview": "arc_title, arc_number(int), arc_type, arc_length_type(selected|One-Shot/Short/Medium/Long/Saga/Season/Full Series/Custom), arc_summary, starting_status_quo, main_story_question, central_emotional_question, main_external_conflict, main_internal_conflict, main_relationship_conflict, main_threat_used, minor_threats_used[](use names from context), main_factions_used[](use names from context), main_characters_used[](use names from context), relationships_used[](use IDs from context), ending_type_target, custom_arc_overview_details",
+                "arc_overview": "arc_title, arc_number(int), arc_type, arc_length_type(plain string, one of: One-Shot/Short Arc/Medium Arc/Long Arc/Saga/Season/Full Series/Custom), arc_summary, starting_status_quo, main_story_question, central_emotional_question, main_external_conflict, main_internal_conflict, main_relationship_conflict, main_threat_used, minor_threats_used[](use names from context), main_factions_used[](use names from context), main_characters_used[](use names from context), relationships_used[](use IDs from context), ending_type_target, custom_arc_overview_details",
                 "chapters": "array of objects [{ chapter_id(use ch_NNN format like ch_001), chapter_number(int, sequential), arc_title(use arc_title from context to link chapter to its arc), chapter_title, chapter_purpose, structure_section(use one valid tag: ki_introduction/sho_development/ten_twist_or_turn/ketsu_conclusion/act_1_setup/act_2_escalation/act_3_climax_resolution/mystery_setup/clue_investigation/escalation_pressure/major_reveal/confrontation_payoff), summary, main_conflict, emotional_beat, twist_or_hook, ending_cliffhanger, characters_present[](string[] use character names from context), factions_used[](string[] use faction names from context), threats_used[](string[] use threat names from context), relationships_used[](string[] use relationship IDs from context), world_rules_shown[](string[]), power_system_shown[](string[]), custom_chapter_details }]",
                 "structure": "For Kishotenketsu: kishotenketsu_outline{ ki_introduction{ initial_mystery_or_question, opening_image, chapter_range }, sho_development{ tension_growth, chapter_range }, ten_twist_or_turn{ main_twist, hidden_truth_revealed, major_threat_recontextualized, relationship_reversal, character_arc_turning_point, chapter_range }, ketsu_conclusion{ conflict_resolution, emotional_resolution, relationship_resolution, world_state_after_arc, character_final_state, chapter_range } }. For Three-Act/Hero's Journey: conflict_driven_outline{ act_1_setup{ opening_hook, normal_world, inciting_incident, first_major_choice, main_goal_locked, chapter_range }, act_2_escalation{ midpoint_reveal_or_defeat, stakes_increase, chapter_range }, act_3_climax_resolution{ darkest_moment, final_plan_or_breakthrough, climax_battle_or_confrontation, major_threat_outcome, character_arc_payoff, relationship_payoff, ending_image, chapter_range } }. For Mystery Arc, plan chapters using these structure_section tags in order: mystery_setup, clue_investigation, escalation_pressure, major_reveal, confrontation_payoff.",
             },
             "scenes": {
-                "scenes_for_chapter": "array of objects [{ scene_id, chapter_id(use context chapter IDs), scene_order(int), location, time, characters_present[](use character names from context), scene_goal, scene_conflict, relationship_dynamic_used, new_information_revealed, action_or_dialogue_focus, visual_manga_moment, panel_mood, ending_beat, custom_scene_details }]",
-                "scene_count_recommendations": "array of objects [{ chapter_id(use context chapter IDs), chapter_number(int), chapter_title, current_scene_count(int), recommended_scene_count(int between 1 and 8), reason, must_cover_beats[](string[]) }]",
+                "scenes_for_chapter": "array of objects [{ scene_id, chapter_id(use context chapter IDs), scene_order(int), location(MUST be the exact name string from context.locations[].name — pick whichever location fits this scene best; never invent a new name), time(one of: Dawn/Morning/Afternoon/Evening/Night/Midnight), characters_present[](use character names from context), scene_goal, scene_conflict, relationship_dynamic_used, new_information_revealed, action_or_dialogue_focus, visual_manga_moment, panel_mood, ending_beat, custom_scene_details }]",
+                "scene_count_recommendations": "array of objects [{ chapter_id(use context chapter IDs), chapter_number(int), chapter_title, current_scene_count(int), recommended_scene_count(int between 1 and 8), reason, must_cover_beats[](array of objects, each: { beat(string — what happens in this scene), location(exact name from context.locations[].name — pick the most fitting location for this beat), time(one of: Dawn/Morning/Afternoon/Evening/Night/Midnight) }) }]",
             },
             "threads": {
                 "main": "goal, obstacles[](string[]), turning_points[](string[]), resolution",
@@ -490,6 +504,21 @@ class LLMService:
                     "faction_details keyed by selected faction slug, each { main_ruling_side, opposing_side, neutral_side, hidden_side, ruling_side_details, conflict_map }, "
                     "threat_details{ main_threat_source, main_threat_goal, main_threat_target, stakes_if_major_threat_wins, time_limit, hidden_truth_behind_threat }. "
                     "Only fill fields relevant to the user's selected options in partial_input. Do not change selections."
+                ),
+            },
+            "locations": {
+                "name": "evocative location name that fits the story world and genre",
+                "type": "location category (e.g. Interior/Residential, Exterior/Urban, Forest, Dungeon, Market, School, Rooftop, Underground)",
+                "description": "rich visual description: lighting mood, dominant colors, textures, atmosphere, key props, time of day feel, story significance",
+                "positive_prompt": "complete manga-style diffusion prompt — include: environment type, architectural or natural details, lighting (harsh/soft/moody), color palette, atmosphere tags, style keywords (manga background, highly detailed, cinematic composition, cel shading)",
+                "negative_prompt": "comma-separated exclusion terms: characters, people, text, watermark, blurry, low quality, nsfw",
+                "locations": (
+                    "array of 5-8 location objects covering key story settings — each: "
+                    "{ name, type, description(visual prose), "
+                    "positive_prompt(complete manga diffusion prompt with lighting+color+detail+style tags), "
+                    "negative_prompt(short exclusion list) }. "
+                    "Base locations on chapters, world rules, factions, and character home/work places from context. "
+                    "Avoid duplicating any locations already in context.locations[]."
                 ),
             },
         }
@@ -749,6 +778,25 @@ class LLMService:
                 "existing_threads": self._clip_text(plot.get("plot_threads", {}), 160),
             }
 
+        # Locations from plot_outline
+        locations_block = plot.get("locations") or {}
+        locations_list = locations_block.get("locations", []) if isinstance(locations_block, dict) else []
+        location_refs = [
+            {
+                "location_id": loc.get("location_id", ""),
+                "name": loc.get("name", ""),
+                "type": loc.get("type", ""),
+                "description": self._clip_text(loc.get("description", ""), 200),
+                "positive_prompt": self._clip_text(loc.get("positive_prompt", ""), 300),
+                "negative_prompt": self._clip_text(loc.get("negative_prompt", ""), 150),
+            }
+            for loc in locations_list if isinstance(loc, dict)
+        ]
+
+        # Faction visuals from master_story
+        faction_vis_block = ms.get("faction_visual_signatures") or {}
+        faction_vis_list = faction_vis_block.get("signatures", []) if isinstance(faction_vis_block, dict) else []
+
         compact = {
             "master_story": {
                 "idea_so_far": self._clip_text(ms.get("idea_so_far", ""), 500),
@@ -756,6 +804,7 @@ class LLMService:
                 "world_type": self._clip_text(ms.get("world_type", {}), 180),
                 "world_rules": self._clip_text(ms.get("world_master_rules", {}), 500),
                 "factions": self._clip_text(ms.get("major_factions_and_ruling_sides", {}), 500),
+                "faction_visual_signatures": self._clip_text(faction_vis_list, 400),
                 "threats": self._clip_text(ms.get("major_threats_and_minor_side_threats", {}), 500),
             },
             "characters": {
@@ -780,6 +829,7 @@ class LLMService:
                 },
                 "plot_threads": self._clip_text(plot.get("plot_threads", {}), 500),
             },
+            "locations": location_refs,
         }
 
         if page == "court":
@@ -811,7 +861,16 @@ class LLMService:
                 "Use the story context (world rules, factions, threats, plot outline) to create consistent, story-relevant character details. "
                 "Return JSON only: keys matching the requested target_fields. "
                 "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field. "
-                "For array fields use arrays. For text fields use strings. Do NOT fabricate character names not in context."
+                "For array fields use arrays. For text fields use strings. Do NOT fabricate character names not in context. "
+                "SELECTION FIELDS — you MUST also choose values for these from the option lists in partial_input: "
+                "status_role → status.selected from status_options, character_role_level.selected from role_options; "
+                "appearance → selected_visual_style from visual_style_options; "
+                "faction → selected (alignment type) from faction_alignment_options; "
+                "backstory → selected_backstory_type from backstory_type_options, selected_mental_state from mental_state_options, selected_community_place from community_place_options; "
+                "personality → selected_personality_types (array, pick 2-5) from personality_type_options; "
+                "powers → selected_power_origin from power_origin_options, selected_power_type from power_type_options, selected_power_level from power_level_options; "
+                "arc → selected_arc_type from arc_type_options. "
+                "Only pick values that EXACTLY match strings in those lists."
             ),
             "board": (
                 "You are the Manga Maker plot generator. Generate plot outline fields as JSON. "
@@ -841,13 +900,73 @@ class LLMService:
             "world": (
                 "You are the Manga Maker world builder. Generate world-building fields as JSON. "
                 "Use the story context (idea, genre, story foundation) to create consistent world details. "
+                "You MUST fill selections from the available_options lists provided in partial_input: "
+                "- world_type: return { selected: one option exactly matching available_world_types }. "
+                "- world_master_rules: return { selected: [array of rules exactly matching available_world_rules] }. "
+                "- major_factions_and_ruling_sides: return { selected: [array of faction types exactly matching available_factions] }. "
+                "- major_threats_and_minor_side_threats: return { major_threat: one option from available_threats, minor_side_threats: [array from available_minor_threats] }. "
+                "Only pick values that exactly match strings in the provided lists. Choose 2-5 rules, 1-3 factions, and 1-2 minor threats that fit the story. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field. "
+                "FACTION DETAILS RULE: if 'world_core_details' is in the requested target_fields, you MUST populate "
+                "world_core_details.faction_details for EVERY faction name in partial_input.major_factions_and_ruling_sides.selected. "
+                "Key each entry by the faction slug (lowercase, spaces→underscores, strip special chars). "
+                "Fill ALL 6 sub-fields: main_ruling_side, opposing_side, neutral_side, hidden_side, ruling_side_details, conflict_map. "
+                "Never return an empty world_core_details — always include faction_details, threat_details, and any active rule_details."
+            ),
+            "locations": (
+                "You are the Manga Maker location designer. Generate location data as JSON. "
+                "Use the FULL story context — world rules, factions, threats, character homes/workplaces, AND every chapter's setting — to create visually distinct, story-consistent locations. "
+                "Each location must have a clear visual identity: specific lighting, color palette, atmosphere, and structural details a manga artist could draw from. "
+                "positive_prompt MUST be a complete AI image generation prompt in manga art style, ready for a diffusion model. Include: scene type, architecture/nature, lighting quality, color palette, mood, and style tags (manga background, highly detailed, cinematic). "
+                "When generating a list (target_field='locations'), base each location on actual chapters and story places — not generic fantasy defaults. "
                 "Return JSON only: keys matching the requested target_fields. "
                 "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field."
             ),
+            "faction_visuals": (
+                "You are the Manga Maker faction visual designer. Generate faction visual signature data as JSON. "
+                "Use the full story context (factions, world rules, threats, AND characters) — especially the appearance, clothing, and faction alignment of characters who belong to each faction. "
+                "Their outfits, color palettes, and visual motifs should inform the faction's visual signature. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "Each faction signature must include visual_signature (prose description of faction look and feel), positive_prompt (diffusion-ready manga-style prompt), and negative_prompt. "
+                "CRITICAL: For each target field, fill EVERY sub-field. Do not omit any sub-field."
+            ),
+            "character_visuals": (
+                "You are the Manga Maker character visual designer. Generate character appearance and AI prompt data as JSON. "
+                "Use the full story context (world style, faction, character backstory, personality, arc) to design visually expressive manga characters. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "ai_image_prompt_notes must be a complete, manga-style diffusion prompt with body type, hair, eyes, outfit, expression, background, and style tags. "
+                "negative_prompt_notes must list what to avoid. Do NOT fabricate character names not in context. "
+                "CRITICAL: For each target field, fill EVERY sub-field. Do not omit any sub-field."
+            ),
             "seed": (
                 "You are the Manga Maker story idea generator. Generate story seed fields as JSON. "
+                "You MUST fill selections from the available_options lists provided in partial_input: "
+                "- story_type: return { selected: [array of 1-3 genre types exactly matching available_story_types] }. "
+                "- ending_direction: return { selected: one option exactly matching available_endings }. "
+                "- story_foundation: return { selected: one option exactly matching available_foundations }. "
+                "Only pick values that exactly match strings in the provided lists. "
                 "Return JSON only: keys matching the requested target_fields. "
                 "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field."
+            ),
+            "script": (
+                "You are the Manga Maker visual director. Generate manga panel visual description fields as JSON. "
+                "Return JSON only: keys matching the requested target_fields. "
+                "Fields you may be asked to fill: "
+                "  visual — 1-2 sentence manga panel description (shot composition, what the reader sees). "
+                "  character_action — what characters are physically doing in the panel. "
+                "  background_details — specific background elements, architecture, nature, props. "
+                "  facial_expression — detailed expression for the focal character. "
+                "  pose_or_body_language — body language, stance, gesture. "
+                "  mood — single evocative word or short phrase (e.g. 'tense dread', 'quiet resolve'). "
+                "  narration — optional caption text the reader sees in the panel (leave empty string if none fits). "
+                "  location_id — MUST be one of the exact location_id strings from the available_locations list "
+                "    provided in generation_hints. Do NOT invent a new id. Pick the location that best fits the "
+                "    scene. If no location fits, return the first available id. "
+                "  render_mode — one of: 't2i', 'i2i', 'layered'. Use 'i2i' for panels that continue a scene "
+                "    with the same characters/background as the previous panel; 't2i' for new scenes. "
+                "All text fields must be plain strings — never wrap them in {selected, options} objects. "
+                "Never return null, {}, or an empty string for a requested field."
             ),
         }
         system = (
@@ -1100,6 +1219,111 @@ class LLMService:
             thread_context_msg += "Use ONLY the character_ids, relationship_ids, and threat names listed above. Do NOT fabricate new IDs.\n"
             thread_context_msg += "Keep each array concise: 1-4 items unless the context clearly requires more.\n"
 
+        # ---- Build location generation instructions ----
+        location_context_msg = ""
+        if page == "locations":
+            ms_data = context.get("master_story", {})
+            char_data = context.get("characters", {})
+            plot_data = context.get("plot_outline", {})
+            hints = generation_hints or {}
+
+            existing_locs = []
+            locs_block = plot_data.get("locations") or {}
+            if isinstance(locs_block, dict):
+                existing_locs = locs_block.get("locations", []) or []
+            existing_loc_names = [l.get("name", "") for l in existing_locs if l.get("name")]
+
+            chapters = plot_data.get("chapter_or_episode_list", {}).get("chapters", []) or []
+            arc_title = (plot_data.get("story_arc_overview", {}) or {}).get("arc_title", "")
+            arc_summary = (plot_data.get("story_arc_overview", {}) or {}).get("arc_summary", "")
+            world_type = ms_data.get("world_type", {})
+            if isinstance(world_type, dict):
+                world_type = world_type.get("selected", "")
+            factions_block = ms_data.get("major_factions_and_ruling_sides", {})
+            factions = factions_block.get("selected", []) if isinstance(factions_block, dict) else []
+            threats_block = ms_data.get("major_threats_and_minor_side_threats", {})
+            major_threat = threats_block.get("major_threat", "") if isinstance(threats_block, dict) else ""
+
+            major_profiles = char_data.get("created_major_character_profiles", [])
+            char_info = [
+                {
+                    "name": p.get("character_name", ""),
+                    "faction": self._clip_text((p.get("main_character_faction_alignment") or {}).get("alignment_details", {}).get("linked_master_faction", ""), 60) if isinstance(p.get("main_character_faction_alignment"), dict) else "",
+                    "community": self._clip_text((p.get("character_backstory_mental_state_and_community_place") or {}).get("community_place_details", {}).get("community_name", ""), 60) if isinstance(p.get("character_backstory_mental_state_and_community_place"), dict) else "",
+                }
+                for p in major_profiles[:10]
+            ]
+
+            location_context_msg = "\n\n=== LOCATION GENERATION INSTRUCTIONS ===\n"
+            location_context_msg += (
+                f"You are generating locations for this story.\n"
+                f"World type: {world_type}\n"
+                f"Active factions: {factions}\n"
+                f"Major threat: {major_threat}\n"
+            )
+            if arc_title:
+                location_context_msg += f"Current arc: \"{arc_title}\"\n"
+            if arc_summary:
+                location_context_msg += f"Arc summary: {arc_summary[:300]}\n"
+
+            if chapters:
+                location_context_msg += f"\nChapters ({len(chapters)} total) — extract real story places from these:\n"
+                for ch in chapters[:12]:
+                    ch_info = f"  Ch.{ch.get('chapter_number', '?')}: \"{ch.get('chapter_title', '')}\""
+                    if ch.get("summary"):
+                        ch_info += f" — {ch['summary'][:120]}"
+                    if ch.get("main_conflict"):
+                        ch_info += f" | conflict: {ch['main_conflict'][:80]}"
+                    location_context_msg += ch_info + "\n"
+                location_context_msg += (
+                    "Read the chapter summaries and conflicts. Identify the KEY PLACES where scenes happen "
+                    "(e.g. where characters live, fight, work, meet, hide, or confront the main threat). "
+                    "Generate locations for those actual story places — not generic fantasy settings.\n"
+                )
+            else:
+                location_context_msg += (
+                    "\nNo chapters exist yet. Generate locations based on the world type, factions, "
+                    "major threat, and character community places — places a story in this setting WOULD need.\n"
+                )
+
+            if char_info:
+                location_context_msg += f"\nKey characters (use their faction/community to infer their home/work locations):\n"
+                for c in char_info:
+                    line = f"  - {c['name']}"
+                    if c.get("faction"):
+                        line += f" (faction: {c['faction']})"
+                    if c.get("community"):
+                        line += f" (community: {c['community']})"
+                    location_context_msg += line + "\n"
+
+            if existing_loc_names:
+                location_context_msg += f"\nAlready created locations (DO NOT duplicate): {existing_loc_names}\n"
+
+            target_count = hints.get("count", 6)
+            single_name = hints.get("name_hint", "")
+            single_type = hints.get("type_hint", "")
+
+            if "locations" in target_fields:
+                location_context_msg += (
+                    f"\nGenerate exactly {target_count} location objects as the 'locations' array. "
+                    "Each must be a REAL story place inferred from the chapters, world, factions, and characters above. "
+                    "Do NOT generate generic or placeholder locations. "
+                    "Each location needs: name, type, description (rich visual prose), "
+                    "positive_prompt (complete manga-style diffusion prompt), negative_prompt.\n"
+                )
+            else:
+                # Single location fill
+                if single_name:
+                    location_context_msg += f"\nYou are filling fields for the location: \"{single_name}\""
+                    if single_type:
+                        location_context_msg += f" (type: {single_type})"
+                    location_context_msg += (
+                        "\nBase the description and prompts on this location's role in the story context above. "
+                        "Make positive_prompt a complete, manga-style diffusion prompt.\n"
+                    )
+                else:
+                    location_context_msg += "\nFill the requested fields for this location based on the story context above.\n"
+
         # ---- Build cast/side identity instructions ----
         identity_context_msg = ""
         if page in ("cast", "side"):
@@ -1135,6 +1359,9 @@ class LLMService:
                 identity_context_msg += f"Existing side characters ({len(side_profiles)}): {', '.join(side_names)}\n"
                 identity_context_msg += f"Major characters (reference, do not duplicate): {', '.join(existing_names)}\n"
                 identity_context_msg += "Side characters should support the story and major characters.\n"
+            user_notes = hints.get("user_character_notes", "").strip()
+            if user_notes:
+                identity_context_msg += f"\n=== USER NOTES FOR THIS CHARACTER ===\n{user_notes}\nTreat these notes as the user's creative intent. Align ALL generated fields with this description.\n"
 
         # ---- Build court optimization ----
         court_context_msg = ""
@@ -1146,6 +1373,41 @@ class LLMService:
                 court_context_msg += f"Answer these {len(questions)} questions:\n"
                 court_context_msg += json.dumps(questions, ensure_ascii=False)
                 court_context_msg += "\nSuggest the most logical answer for each based on story continuity.\n"
+
+        # ---- Build panel-fill instructions when page is "script" ----
+        script_context_msg = ""
+        if page == "script":
+            hints = generation_hints or {}
+            avail_locs = hints.get("available_locations", [])
+            ch_num = hints.get("chapter_number", "")
+            ch_title = hints.get("chapter_title", "")
+            pg_num = hints.get("page_number", "")
+            pn_num = hints.get("panel_number", "")
+            script_context_msg = "\n\n=== PANEL FILL INSTRUCTIONS ===\n"
+            if ch_num or ch_title:
+                script_context_msg += f"Chapter: {ch_num}{': ' + ch_title if ch_title else ''}\n"
+            if pg_num:
+                script_context_msg += f"Page: {pg_num}"
+                if pn_num:
+                    script_context_msg += f", Panel: {pn_num}"
+                script_context_msg += "\n"
+            if avail_locs:
+                script_context_msg += "Available locations (use EXACTLY these location_id values):\n"
+                for loc in avail_locs:
+                    script_context_msg += (
+                        f"  location_id={loc.get('location_id', '')} | "
+                        f"name=\"{loc.get('name', '')}\" | type={loc.get('type', '')}\n"
+                    )
+                script_context_msg += (
+                    "You MUST return location_id as one of the exact strings listed above. "
+                    "Match the location to the scene context. Do not fabricate or omit it.\n"
+                )
+            else:
+                script_context_msg += "No locations defined yet — omit location_id from your response.\n"
+            script_context_msg += (
+                "All other text fields (visual, character_action, etc.) must be plain strings. "
+                "Do NOT wrap them in {selected, options} objects.\n"
+            )
 
         constraints_msg = ""
         if user_constraints:
@@ -1167,7 +1429,7 @@ class LLMService:
             f"Fields to generate: [{field_list}]\n"
             f"Partial input already filled: {json.dumps(partial_input, ensure_ascii=False)}\n"
             f"{constraints_msg}"
-            f"{arc_context_msg}{chapter_context_msg}{scene_context_msg}{thread_context_msg}{identity_context_msg}{court_context_msg}"
+            f"{arc_context_msg}{chapter_context_msg}{scene_context_msg}{thread_context_msg}{location_context_msg}{identity_context_msg}{court_context_msg}{script_context_msg}"
             f"Current compact story context: {json.dumps(compact_context, ensure_ascii=False)}"
             f"{schema_hint}"
         )
@@ -1197,7 +1459,148 @@ class LLMService:
             warnings = [*warnings, "AI returned no scene-count recommendations. Retry in a minute or fill manually."]
         if page == "threads":
             generated = self._backfill_thread_ids(generated=generated, context=context)
-        return {"generated_fields": generated, "warnings": warnings}
+        return {"generated": generated, "generated_fields": generated, "warnings": warnings, "used_fallback": result.used_fallback}
+
+    # ── Batch panel fill ──────────────────────────────────────────────────────
+
+    def fill_chapter_panels_batch(
+        self,
+        *,
+        story_id: str,
+        chapter_metadata: dict[str, Any],
+        pages: list[dict[str, Any]],
+        available_locations: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fill ALL panel visual fields for a chapter in a single LLM call.
+
+        Instead of one call per panel (N×M calls), the LLM receives every panel in
+        the chapter at once and returns a mapping of panel_id → filled fields.
+        Reduces ~15 sequential calls to 1 per chapter invocation.
+
+        Returns: {"panels": {panel_id: {field: value, ...}, ...}, "warnings": [...], "used_fallback": bool}
+        """
+        run_id = f"llm_{uuid4().hex[:12]}"
+        ch_num = chapter_metadata.get("chapter_number", "?")
+        ch_title = chapter_metadata.get("chapter_title", "")
+        logger.info("[LLM BATCH] run_id=%s story=%s chapter=%s", run_id, story_id, ch_num)
+
+        # Build a flat list of panels with their page context so the LLM knows placement.
+        panel_inventory: list[dict[str, Any]] = []
+        for page in pages:
+            pg_num = page.get("page_number", "?")
+            pg_mood = page.get("page_mood", "")
+            for panel in (page.get("panels") or []):
+                if not isinstance(panel, dict):
+                    continue
+                entry: dict[str, Any] = {
+                    "panel_id": panel.get("panel_id", ""),
+                    "page_number": pg_num,
+                    "panel_number": panel.get("panel_number", "?"),
+                }
+                if pg_mood:
+                    entry["page_mood"] = pg_mood
+                # Pass existing dialogue as context so the LLM can write consistent visuals.
+                dialogue = panel.get("dialogue")
+                if dialogue:
+                    entry["dialogue_context"] = [
+                        f"{(d.get('speaker_name') or d.get('speaker') or '?')}: {d.get('text', '')}"
+                        for d in (dialogue if isinstance(dialogue, list) else [])
+                        if isinstance(d, dict) and d.get("text")
+                    ]
+                panel_inventory.append(entry)
+
+        if not panel_inventory:
+            return {"panels": {}, "warnings": ["No panels found in chapter."], "used_fallback": False}
+
+        # Location block for the prompt.
+        loc_block = ""
+        if available_locations:
+            loc_block = "Available locations — use EXACTLY these location_id values:\n"
+            for loc in available_locations:
+                loc_block += f"  {loc.get('location_id', '')} | \"{loc.get('name', '')}\" | type={loc.get('type', '')}\n"
+        else:
+            loc_block = "No locations defined — omit location_id from your response.\n"
+
+        system = (
+            "You are the Manga Maker visual director. Fill ALL panel visual fields for this chapter in ONE response. "
+            "Return a single JSON object with key \"panels\" whose value maps panel_id → filled fields object. "
+            "Every panel_id in the input MUST appear in your output. "
+            "Fields to fill for each panel:\n"
+            "  visual — 1-2 sentence manga panel description (shot composition, what the reader sees).\n"
+            "  character_action — what characters are physically doing.\n"
+            "  background_details — specific background elements, architecture, nature, props.\n"
+            "  facial_expression — detailed expression for the focal character.\n"
+            "  pose_or_body_language — body language, stance, gesture.\n"
+            "  mood — single evocative word or short phrase (e.g. 'tense dread', 'quiet resolve').\n"
+            "  narration — optional caption text (empty string if none fits).\n"
+            "  location_id — MUST be one of the exact location_id strings from available_locations. "
+            "Pick the one that best fits the scene. Never invent an id.\n"
+            "  render_mode — one of: 't2i', 'i2i', 'layered'. Use 'i2i' for panels that continue the "
+            "same scene as the previous panel; 't2i' for new scenes.\n"
+            "All text fields must be plain strings — never objects. Never omit a panel_id. "
+            "Return JSON only — no markdown, no explanation."
+        )
+
+        compact_context = self._compact_generation_context(
+            page="script",
+            context=context,
+            generation_hints={"chapter_number": ch_num, "chapter_title": ch_title},
+        )
+
+        user_msg = (
+            f"Chapter: {ch_num}{': ' + ch_title if ch_title else ''}\n\n"
+            f"{loc_block}\n"
+            f"Panels to fill ({len(panel_inventory)} total):\n"
+            f"{json.dumps(panel_inventory, ensure_ascii=False)}\n\n"
+            f"Story context:\n{json.dumps(compact_context, ensure_ascii=False)}\n\n"
+            'Return format: { "panels": { "<panel_id>": { "visual": "...", "character_action": "...", '
+            '"background_details": "...", "facial_expression": "...", "pose_or_body_language": "...", '
+            '"mood": "...", "narration": "...", "location_id": "...", "render_mode": "t2i" }, ... } }'
+        )
+
+        # Build deterministic fallback (one entry per panel).
+        first_loc_id = available_locations[0]["location_id"] if available_locations else ""
+        fallback_panels: dict[str, Any] = {
+            entry["panel_id"]: {
+                "visual": f"Ch.{ch_num} Pg.{entry['page_number']} Panel {entry['panel_number']} — scene in progress.",
+                "character_action": "Characters engage in the scene.",
+                "background_details": "Scene background.",
+                "facial_expression": "Focused.",
+                "pose_or_body_language": "Standard stance.",
+                "mood": "Tense",
+                "narration": "",
+                "location_id": first_loc_id,
+                "render_mode": "t2i",
+            }
+            for entry in panel_inventory
+            if entry["panel_id"]
+        }
+        fallback = {"panels": fallback_panels, "warnings": ["Deterministic fallback — AI not configured."]}
+
+        # Use 3× the normal timeout — batch calls generate far more tokens.
+        batch_timeout = max(self.settings.llm_timeout_seconds * 3, 120.0)
+
+        result = self._call_json_or_fallback(
+            story_id=story_id,
+            workspace_id=None,
+            run_type="fill_chapter_panels_batch",
+            input_payload={"chapter": ch_num, "panel_count": len(panel_inventory)},
+            system_prompt=system,
+            user_prompt=user_msg,
+            fallback=fallback,
+            timeout_override=batch_timeout,
+        )
+        out = result.output
+        panels_map = out.get("panels", {})
+        if not isinstance(panels_map, dict):
+            panels_map = {}
+
+        return {
+            "panels": panels_map,
+            "warnings": out.get("warnings", []),
+            "used_fallback": result.used_fallback,
+        }
 
     def _backfill_thread_ids(self, *, generated: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         """Ensure plot_threads items carry stable IDs even when the LLM omits them.

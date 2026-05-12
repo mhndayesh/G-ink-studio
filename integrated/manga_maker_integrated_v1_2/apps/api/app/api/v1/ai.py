@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 
 from app.core.errors import ok
 from app.core.auth import require_story_access
@@ -13,6 +14,15 @@ from app.services.character_service import CharacterService
 from app.repositories.sqlite_registry import SQLiteRegistry
 
 router = APIRouter(dependencies=[Depends(require_story_access)], prefix="/stories/{story_id}/ai", tags=["ai"])
+
+
+class FieldFillRequest(BaseModel):
+    """Universal per-field LLM fill request."""
+    page: str                          # Studio page/context (seed, cast, board, scenes, locations, faction_visuals, …)
+    target_fields: list[str]           # Which fields to fill
+    partial_input: dict[str, Any] = {} # Current values to give LLM for context
+    generation_hints: dict[str, Any] = {}
+    user_constraints: dict[str, Any] = {}
 
 
 @router.post("/generate")
@@ -109,14 +119,91 @@ def get_references(story_id: str, registry: SQLiteRegistry = Depends(get_registr
         minor = threats_block.get("minor_side_threats", [])
         refs["threats"].extend([t for t in minor if t != "Custom"])
 
-    # Chapters
+    # Chapters + Locations from plot_outline
     po_rec = registry.get_current_file(story_id, "plot_outline")
     if po_rec:
         po_data = po_rec.get("json_copy", {})
         for ch in po_data.get("chapter_or_episode_list", {}).get("chapters", []):
             refs["chapters"].append({"id": ch.get("chapter_id", ""), "number": ch.get("chapter_number", 0), "title": ch.get("chapter_title", "")})
+        locs_block = po_data.get("locations") or {}
+        for loc in locs_block.get("locations", []) if isinstance(locs_block, dict) else []:
+            refs.setdefault("locations", []).append({"id": loc.get("location_id", ""), "name": loc.get("name", ""), "type": loc.get("type", "")})
 
+    refs.setdefault("locations", [])
     return ok(refs)
+
+
+class ChapterVisualsBatchRequest(BaseModel):
+    """Batch visual fill for all panels in the current chapter script."""
+    available_locations: list[dict[str, Any]] = []
+
+
+@router.post("/fill-chapter-visuals")
+def fill_chapter_visuals_batch(
+    story_id: str,
+    body: ChapterVisualsBatchRequest,
+    llm: LLMService = Depends(get_llm_service),
+    registry: SQLiteRegistry = Depends(get_registry),
+):
+    """Fill every panel's visual fields for the current chapter in a single LLM call.
+
+    This replaces the N×M per-panel /fill-field loop in Visuals Studio with one
+    batch call, reducing ~15 sequential API roundtrips to 1 per chapter.
+    The working slot chapter_script.json is read directly — ensure the desired
+    chapter is loaded before calling this endpoint.
+    """
+    context: dict = {}
+    for ft in ["master_story", "characters", "plot_outline", "plot_workspace", "chapter_script"]:
+        rec = registry.get_current_file(story_id, ft)
+        if rec:
+            context[ft] = rec.get("json_copy", {})
+
+    cs_rec = registry.get_current_file(story_id, "chapter_script")
+    if not cs_rec:
+        from app.core.errors import MangaMakerError
+        raise MangaMakerError("CHAPTER_SCRIPT_NOT_FOUND", "No chapter script in working slot", 404)
+
+    cs_data = cs_rec.get("json_copy", {}) or {}
+    chapter_metadata = cs_data.get("chapter_metadata", {}) or {}
+    pages = cs_data.get("pages", []) or []
+
+    if not pages:
+        return ok({"panels": {}, "warnings": ["No pages in current chapter script."], "used_fallback": False})
+
+    result = llm.fill_chapter_panels_batch(
+        story_id=story_id,
+        chapter_metadata=chapter_metadata,
+        pages=pages,
+        available_locations=body.available_locations,
+        context=context,
+    )
+    return ok(result)
+
+
+@router.post("/fill-field")
+def fill_field(
+    story_id: str,
+    body: FieldFillRequest,
+    llm: LLMService = Depends(get_llm_service),
+    registry: SQLiteRegistry = Depends(get_registry),
+):
+    """Universal LLM field-fill: any page, any fields, full story context always loaded."""
+    context: dict = {}
+    for file_type in ["master_story", "characters", "plot_outline", "plot_workspace", "chapter_script"]:
+        rec = registry.get_current_file(story_id, file_type)
+        if rec:
+            context[file_type] = rec.get("json_copy", {})
+
+    result = llm.generate_fields(
+        story_id=story_id,
+        page=body.page,
+        target_fields=body.target_fields,
+        partial_input=body.partial_input,
+        context=context,
+        user_constraints=body.user_constraints or {},
+        generation_hints=body.generation_hints,
+    )
+    return ok(result)
 
 
 # Map a narrative_structure choice → the sections it requires + the keywords

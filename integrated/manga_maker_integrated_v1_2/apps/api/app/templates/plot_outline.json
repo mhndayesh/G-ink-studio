@@ -242,6 +242,20 @@
       }
     ]
   },
+  "locations": {
+    "note_to_user": "Named locations used across the story. Each location has AI prompts for consistent background generation.",
+    "locations": [
+      {
+        "location_id": "loc_001",
+        "name": "",
+        "type": "",
+        "description": "",
+        "positive_prompt": "",
+        "negative_prompt": "",
+        "used_in_chapters": []
+      }
+    ]
+  },
   "scene_cards": {
     "note_to_user": "Optional deeper breakdown after chapters exist.",
     "scenes": [
@@ -249,6 +263,7 @@
         "scene_id": "scene_001",
         "chapter_id": "ch_001",
         "scene_order": 1,
+        "location_id": "",
         "location": "",
         "time": "",
         "characters_present": [],

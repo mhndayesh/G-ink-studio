@@ -1,13 +1,25 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, Query
+from pydantic import BaseModel
 
 from app.core.errors import ok
 from app.core.auth import require_story_access
-from app.main_dependencies import get_chapter_script_service, get_version_service
+from app.main_dependencies import get_chapter_script_service, get_character_service, get_llm_service, get_registry, get_version_service
 from app.models.api import ChapterScriptPatchRequest
+from app.repositories.sqlite_registry import SQLiteRegistry
 from app.services.chapter_script_service import ChapterScriptService
+from app.services.character_service import CharacterService
+from app.services.llm_service import LLMService
 from app.services.version_service import VersionService
+from app.api.v1.characters import _collect_script_speakers, _SKIP_SPEAKERS
+
+
+class FillVisualsAllRequest(BaseModel):
+    chapter_ids: list[str] = []
+    available_locations: list[dict[str, Any]] = []
 
 router = APIRouter(dependencies=[Depends(require_story_access)], prefix="/stories/{story_id}/chapter-script", tags=["chapter-script"])
 
@@ -66,6 +78,62 @@ def extract_events(
     service: ChapterScriptService = Depends(get_chapter_script_service),
 ):
     return ok(service.extract_events(story_id, chapter_id=chapter_id))
+
+
+@router.post("/generate-batch")
+def generate_batch(
+    story_id: str,
+    chapter_ids: list[str] = Body(default=[]),
+    service: ChapterScriptService = Depends(get_chapter_script_service),
+    version_service: VersionService = Depends(get_version_service),
+    character_service: CharacterService = Depends(get_character_service),
+    registry: SQLiteRegistry = Depends(get_registry),
+):
+    """Generate all chapters with parallel LLM calls, approve each, and auto-sync script speakers."""
+    result = service.generate_batch_and_approve(story_id, chapter_ids, version_service=version_service)
+
+    try:
+        chars_data = character_service.get_characters(story_id)
+        existing = {
+            (p.get("character_name") or "").strip().lower()
+            for profiles in (
+                chars_data.get("created_major_character_profiles", []),
+                chars_data.get("created_side_character_profiles", []),
+            )
+            for p in profiles
+            if p.get("character_name")
+        }
+        all_speakers = _collect_script_speakers(story_id, registry)
+        orphans = sorted(s for s in all_speakers if s not in _SKIP_SPEAKERS and s not in existing)
+        sync_created: list[str] = []
+        for speaker in orphans:
+            character_service.create_side_character_profile(story_id=story_id, character_name=speaker, profile_data={})
+            sync_created.append(speaker)
+        result["sync_created"] = sync_created
+        result["sync_count"] = len(sync_created)
+    except Exception as exc:
+        result["sync_error"] = str(exc)
+
+    return ok(result)
+
+
+@router.post("/fill-visuals-batch-all")
+def fill_visuals_batch_all(
+    story_id: str,
+    body: FillVisualsAllRequest,
+    service: ChapterScriptService = Depends(get_chapter_script_service),
+    version_service: VersionService = Depends(get_version_service),
+    llm: LLMService = Depends(get_llm_service),
+):
+    """Fill all chapters' panel visuals with parallel LLM calls, then sequentially apply+approve+snapshot."""
+    result = service.fill_visuals_batch_all(
+        story_id,
+        body.chapter_ids,
+        body.available_locations,
+        llm_service=llm,
+        version_service=version_service,
+    )
+    return ok(result)
 
 
 @router.post("/approve")

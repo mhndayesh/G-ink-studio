@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response, StreamingResponse
 
 from app.core.auth import require_story_access
+from app.core.errors import ok
 from app.main_dependencies import get_registry
 from app.repositories.sqlite_registry import SQLiteRegistry
 
@@ -259,6 +260,8 @@ def _character_reference_lines(characters: dict) -> list[str]:
         name = _safe(profile.get("character_name"))
         if not name:
             continue
+        # Spec: character names lowercase — parser silently drops fields otherwise
+        name = name.lower()
         role = _profile_role(profile)
         header = name + (f" - {role}" if role else "")
         lines += [header, "-" * len(header)]
@@ -314,28 +317,55 @@ def _character_reference_lines(characters: dict) -> list[str]:
     return lines
 
 
-def _location_index_lines(scripts: list[dict]) -> list[str]:
-    """Cross-chapter index of every location and which panels reference it."""
+def _location_index_lines(scripts: list[dict], loc_by_id: dict[str, dict] | None = None) -> list[str]:
+    """Cross-chapter index of every location and which panels reference it.
+
+    Resolves location names from (in order of preference):
+      1. page.location_id → loc_by_id lookup (set by Visuals Studio)
+      2. scene_breakdown.location_id → loc_by_id lookup
+      3. scene_breakdown.location string
+      4. page.location string (legacy)
+    """
     locs: dict[str, list[str]] = {}
+    loc_map = loc_by_id or {}
     for cs in scripts:
         ch_meta = cs.get("chapter_metadata", {}) or {}
         ch_num = _safe(ch_meta.get("chapter_number") or ch_meta.get("chapter_id"), "?")
         scene_breakdown = _as_list(cs.get("chapter_scene_breakdown"))
-        scene_locations = {
-            _safe(s.get("scene_id")): _safe(s.get("location"))
-            for s in scene_breakdown
-            if isinstance(s, dict)
-        }
+        scene_loc_id: dict[str, str] = {}   # scene_id → location_id
+        scene_loc_name: dict[str, str] = {} # scene_id → location name string
+        for s in scene_breakdown:
+            if not isinstance(s, dict):
+                continue
+            sid = _safe(s.get("scene_id"))
+            if s.get("location_id"):
+                scene_loc_id[sid] = _safe(s.get("location_id"))
+            if s.get("location"):
+                scene_loc_name[sid] = _safe(s.get("location"))
         for page in _as_list(cs.get("pages")):
             if not isinstance(page, dict):
                 continue
             scene_id = _safe(page.get("scene_id"))
-            location = scene_locations.get(scene_id) or _safe(page.get("location"))
-            if not location:
-                continue
             page_num = _safe(page.get("page_number") or page.get("page_id"))
             ref = f"Ch.{ch_num} Pg.{page_num}"
-            locs.setdefault(location, []).append(ref)
+            # Priority 1: page.location_id (set by Visuals Studio)
+            page_lid = _safe(page.get("location_id"))
+            if page_lid and page_lid in loc_map:
+                loc_name = _safe(loc_map[page_lid].get("name"))
+                if loc_name:
+                    locs.setdefault(loc_name, []).append(ref)
+                    continue
+            # Priority 2: scene_breakdown.location_id → name
+            scene_lid = scene_loc_id.get(scene_id, "")
+            if scene_lid and scene_lid in loc_map:
+                loc_name = _safe(loc_map[scene_lid].get("name"))
+                if loc_name:
+                    locs.setdefault(loc_name, []).append(ref)
+                    continue
+            # Priority 3: scene_breakdown.location string
+            loc_str = scene_loc_name.get(scene_id, "") or _safe(page.get("location"))
+            if loc_str:
+                locs.setdefault(loc_str, []).append(ref)
     if not locs:
         return []
     lines = ["LOCATION INDEX", "=" * 14, ""]
@@ -387,6 +417,68 @@ def _panel_full_block(panel: dict, indent: str = "    ") -> list[str]:
             sfx_parts.append(s.strip())
     if sfx_parts:
         out.append(f"{indent}  SFX: {', '.join(sfx_parts)}")
+    # Dialogue lines — format: Speaker (BubbleType): "text"
+    for d in _as_list(panel.get("dialogue", [])):
+        if not isinstance(d, dict):
+            continue
+        text = _safe(d.get("text"))
+        if not text:
+            continue
+        speaker = _safe(d.get("speaker_name") or d.get("speaker") or d.get("speaker_id")) or "?"
+        bubble_block = d.get("speech_bubble_type")
+        bubble = _selected(bubble_block) if isinstance(bubble_block, dict) else _safe(bubble_block)
+        # Skip Narrator entries — Narration: field already covers caption text (avoids duplicate lettering)
+        if speaker.lower() in ("narrator", "narration") or (bubble and bubble.lower() == "narration"):
+            continue
+        bubble_tag = f" ({bubble})" if bubble and bubble.lower() not in ("", "normal", "standard") else ""
+        out.append(f'{indent}  Dialogue: {speaker}{bubble_tag}: "{text}"')
+    # Render mode hint — always emit so studio can read it; skip only if absent
+    rm_block = panel.get("render_mode")
+    if rm_block:
+        rm = _selected(rm_block) if isinstance(rm_block, dict) else _safe(rm_block)
+        if rm:
+            out.append(f"{indent}  Render mode: {rm}")
+    return out
+
+
+def _locations_section_lines(po: dict) -> list[str]:
+    """Build the LOCATIONS section from plot_outline.locations.locations[]."""
+    locs_block = (po.get("locations") or {})
+    locs = _as_list(locs_block.get("locations", []))
+    if not locs:
+        return []
+    lines: list[str] = ["LOCATIONS", "=" * 9, ""]
+    for loc in locs:
+        if not isinstance(loc, dict):
+            continue
+        name = _safe(loc.get("name"))
+        if not name:
+            continue
+        loc_type = _safe(loc.get("type"))
+        header = name + (f" - {loc_type}" if loc_type else "")
+        lines += [header, "-" * len(header)]
+        desc = _safe(loc.get("description"))
+        if desc:
+            lines.append(f"  Description: {desc}")
+        pos = _safe(loc.get("positive_prompt"))
+        if pos:
+            lines.append(f"  AI prompt (positive): {pos}")
+        neg = _safe(loc.get("negative_prompt"))
+        if neg:
+            lines.append(f"  AI prompt (negative): {neg}")
+        lines.append("")
+    return lines
+
+
+def _build_loc_by_id(po: dict) -> dict[str, dict]:
+    """Map location_id → location dict from plot_outline."""
+    locs_block = (po.get("locations") or {})
+    out: dict[str, dict] = {}
+    for loc in _as_list(locs_block.get("locations", [])):
+        if isinstance(loc, dict):
+            lid = _safe(loc.get("location_id"))
+            if lid:
+                out[lid] = loc
     return out
 
 
@@ -394,14 +486,18 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
     """Build the visual reference document.
 
     Aggregates panel content across ALL chapter_script snapshots (one per chapter)
-    plus a character reference sheet up top and a location index.
+    plus a character reference sheet, a LOCATIONS section, and a location index.
     """
     lines: list[str] = []
+    po = files.get("plot_outline", {}) or {}
     title = _story_title(files.get("master_story", {}) or {}, "Story")
     lines += [f"VISUAL REFERENCE - {title}", "=" * (19 + len(title)), ""]
 
-    # Character reference sheets (Phase 2)
+    # Character reference sheets
     lines.extend(_character_reference_lines(files.get("characters", {}) or {}))
+
+    # LOCATIONS section — before chapters, so studio can parse location prompts
+    lines.extend(_locations_section_lines(po))
 
     # Choose source: cross-version aggregate or single current chapter_script
     scripts: list[dict]
@@ -415,10 +511,13 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
         lines.append("No script pages found. Generate the Manga Script for at least one chapter first.")
         return lines
 
-    # Location index (Phase 2)
-    lines.extend(_location_index_lines(scripts))
+    # Build location_id → name lookup (shared by index + per-page headers)
+    loc_by_id = _build_loc_by_id(po)
 
-    # Per-chapter panel breakdown (Phases 1 + 3)
+    # Location index — cross-chapter usage map
+    lines.extend(_location_index_lines(scripts, loc_by_id=loc_by_id))
+
+    # Per-chapter panel breakdown
     lines += ["CHAPTERS", "=" * 8, ""]
     for cs in scripts:
         metadata = cs.get("chapter_metadata", {}) or {}
@@ -430,11 +529,18 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
         if ch_status:
             lines.append(f"Status: {ch_status}")
         scene_breakdown = _as_list(cs.get("chapter_scene_breakdown"))
-        scene_titles = {
-            _safe(s.get("scene_id")): _safe(s.get("scene_title") or s.get("location"))
-            for s in scene_breakdown
-            if isinstance(s, dict)
-        }
+        scene_titles: dict[str, str] = {}
+        scene_loc_id: dict[str, str] = {}   # scene_id → location_id from breakdown
+        scene_loc_name: dict[str, str] = {} # scene_id → location string name from breakdown
+        for s in scene_breakdown:
+            if not isinstance(s, dict):
+                continue
+            sid = _safe(s.get("scene_id"))
+            scene_titles[sid] = _safe(s.get("scene_title") or s.get("location"))
+            if s.get("location_id"):
+                scene_loc_id[sid] = _safe(s.get("location_id"))
+            if s.get("location"):
+                scene_loc_name[sid] = _safe(s.get("location"))
         for page in _as_list(cs.get("pages")):
             if not isinstance(page, dict):
                 continue
@@ -443,9 +549,25 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
             scene_label = scene_titles.get(scene_id, scene_id)
             page_purpose = _safe(page.get("page_purpose"))
             page_mood = _safe(page.get("page_mood"))
+
+            # Resolve location name: page.location_id → loc_by_id → name
+            # Fallback: scene_breakdown location_id → name, then scene_breakdown location string
+            loc_name = ""
+            page_loc_id = _safe(page.get("location_id"))
+            if page_loc_id and page_loc_id in loc_by_id:
+                loc_name = _safe(loc_by_id[page_loc_id].get("name"))
+            if not loc_name:
+                scene_lid = scene_loc_id.get(scene_id, "")
+                if scene_lid and scene_lid in loc_by_id:
+                    loc_name = _safe(loc_by_id[scene_lid].get("name"))
+            if not loc_name:
+                loc_name = scene_loc_name.get(scene_id, "")
+
             header = f"\n  Page {page_num}"
             if scene_label:
                 header += f" - Scene: {scene_label}"
+            if loc_name:
+                header += f" - Location: {loc_name}"
             lines.append(header)
             if page_purpose:
                 lines.append(f"    Purpose: {page_purpose}")
@@ -709,6 +831,8 @@ def _relationships_lines(ch: dict) -> list[str]:
         reason = _safe(r.get("reason"))
         if not pair:
             continue
+        # Spec: character names lowercase
+        pair = pair.lower()
         line = pair
         if rtype:
             line += f" - {rtype}"
@@ -718,10 +842,23 @@ def _relationships_lines(ch: dict) -> list[str]:
     return out
 
 
-def _plot_threads_lines(po: dict) -> list[str]:
+def _build_id_to_name(ch: dict) -> dict[str, str]:
+    """Map profile_id → character_name from characters.json for arc label resolution."""
+    mapping: dict[str, str] = {}
+    for p in _as_list(ch.get("created_major_character_profiles", [])) + _as_list(ch.get("created_side_character_profiles", [])):
+        if isinstance(p, dict):
+            pid = _safe(p.get("profile_id"))
+            name = _safe(p.get("character_name"))
+            if pid and name:
+                mapping[pid] = name
+    return mapping
+
+
+def _plot_threads_lines(po: dict, ch: dict | None = None) -> list[str]:
     threads = po.get("plot_threads", {}) or {}
     if not isinstance(threads, dict):
         return []
+    id_to_name: dict[str, str] = _build_id_to_name(ch) if ch else {}
     out: list[str] = []
     main = threads.get("main_plot_thread", {}) if isinstance(threads.get("main_plot_thread"), dict) else {}
     main_goal = _safe(main.get("goal"))
@@ -737,14 +874,18 @@ def _plot_threads_lines(po: dict) -> list[str]:
         if not isinstance(arc, dict):
             continue
         cid = _safe(arc.get("character_id"))
+        # Resolve ID → name; fall back to the raw value (may already be a name)
+        label = id_to_name.get(cid, cid)
+        # Spec: character names lowercase
+        label = label.lower() if label else label
         start = _safe(arc.get("starting_state"))
         final = _safe(arc.get("final_state"))
-        if cid or start or final:
-            out.append(f"Character arc {cid}: {start or '?'} -> {final or '?'}")
+        if label or start or final:
+            out.append(f"Character arc {label}: {start or '?'} -> {final or '?'}")
     return out
 
 
-def _assemble_story_lines(files: dict) -> list[str]:
+def _assemble_story_lines(files: dict, all_scripts: list[dict] | None = None) -> list[str]:
     """Build a clean readable story document from the current official files."""
     lines: list[str] = []
     ms = files.get("master_story", {})
@@ -784,6 +925,25 @@ def _assemble_story_lines(files: dict) -> list[str]:
     if factions:
         lines += ["FACTIONS", "-" * 8, ", ".join(factions), ""]
 
+    # FACTION VISUALS — visual signature per faction (injected into panel prompts)
+    faction_vis_block = ms.get("faction_visual_signatures", {}) or {}
+    faction_sigs = _as_list(faction_vis_block.get("signatures", []))
+    faction_sigs = [s for s in faction_sigs if isinstance(s, dict) and _safe(s.get("faction_name"))]
+    if faction_sigs:
+        lines += ["FACTION VISUALS", "-" * 15]
+        for sig in faction_sigs:
+            name = _safe(sig.get("faction_name"))
+            vis = _safe(sig.get("visual_signature"))
+            pos = _safe(sig.get("positive_prompt"))
+            neg = _safe(sig.get("negative_prompt"))
+            if vis:
+                lines.append(f"{name}: {vis}")
+            if pos:
+                lines.append(f"  AI prompt (positive): {pos}")
+            if neg:
+                lines.append(f"  AI prompt (negative): {neg}")
+        lines.append("")
+
     # THREATS — full block (major + minor + source/goal/stakes/level)
     threat_lines = _threats_lines(ms)
     if threat_lines:
@@ -801,6 +961,8 @@ def _assemble_story_lines(files: dict) -> list[str]:
             name = _safe(profile.get("character_name") or profile.get("name"))
             if not name:
                 continue
+            # Spec: character names lowercase — parser silently drops fields otherwise
+            name = name.lower()
             role = _profile_role(profile)
             bio = _profile_bio(profile)
             lines.append(f"{name}{' - ' + role if role else ''}")
@@ -835,7 +997,7 @@ def _assemble_story_lines(files: dict) -> list[str]:
         _append_field(lines, label, story_arc.get(key))
     lines.append("")
 
-    thread_lines = _plot_threads_lines(po)
+    thread_lines = _plot_threads_lines(po, ch)
     if thread_lines:
         lines += ["PLOT THREADS", "-" * 12]
         lines.extend(thread_lines)
@@ -845,8 +1007,20 @@ def _assemble_story_lines(files: dict) -> list[str]:
     outline_chapters = _as_list((po.get("chapter_or_episode_list", {}) or {}).get("chapters", []))
     scene_cards = _as_list((po.get("scene_cards", {}) or {}).get("scenes", []))
     scenes_by_chapter = _group_scenes_by_chapter(scene_cards)
-    script_pages = _as_list(cs.get("pages"))
-    script_chapter_id = _safe((cs.get("chapter_metadata") or {}).get("chapter_id"))
+
+    # Build chapter_id → pages map. Prefer all_scripts (cross-version aggregate) so every
+    # approved chapter's panel dialogue/narration appears in the document, not just the one
+    # chapter currently loaded in the working slot.
+    if all_scripts:
+        script_pages_by_chapter: dict[str, list[dict]] = {
+            _safe((s.get("chapter_metadata") or {}).get("chapter_id")): _as_list(s.get("pages"))
+            for s in all_scripts
+            if _safe((s.get("chapter_metadata") or {}).get("chapter_id"))
+        }
+    else:
+        # Fallback: single working-slot chapter
+        cid = _safe((cs.get("chapter_metadata") or {}).get("chapter_id"))
+        script_pages_by_chapter = {cid: _as_list(cs.get("pages"))} if cid else {}
 
     if not outline_chapters:
         lines += ["CHAPTERS", "=" * 8, "", "No chapters found. Create chapters on the Plot Board first.", ""]
@@ -859,8 +1033,7 @@ def _assemble_story_lines(files: dict) -> list[str]:
         header = _chapter_header(chapter)
         chapter_id = _safe(chapter.get("chapter_id"))
         chapter_scenes = scenes_by_chapter.get(chapter_id, [])
-        # The chapter_script.json holds ONE chapter at a time. Match against its chapter_metadata.chapter_id.
-        chapter_script_pages = script_pages if (chapter_id and chapter_id == script_chapter_id) else []
+        chapter_script_pages = script_pages_by_chapter.get(chapter_id, [])
 
         lines += [header, "-" * len(header)]
         _append_field(lines, "Arc", chapter.get("arc_title") or arc_title)
@@ -963,6 +1136,9 @@ def _scene_script_lines(pages: list[dict], indent: str = "  ") -> list[str]:
                 speaker = _safe(d.get("speaker_name") or d.get("speaker") or d.get("speaker_id")) or "?"
                 bubble_block = d.get("speech_bubble_type")
                 bubble = _selected(bubble_block) if isinstance(bubble_block, dict) else _safe(bubble_block)
+                # Skip Narrator entries — Narration: field already covers caption text
+                if speaker.lower() in ("narrator", "narration") or (bubble and bubble.lower() == "narration"):
+                    continue
                 bubble_tag = f" ({bubble})" if bubble and bubble != "Normal" else ""
                 out.append(f'{indent}    {speaker}{bubble_tag}: "{text}"')
             sfx_items = _as_list(panel.get("sound_effects", []))
@@ -979,7 +1155,16 @@ def _scene_script_lines(pages: list[dict], indent: str = "  ") -> list[str]:
     return out
 
 
-def _assemble_scenes_lines(files: dict) -> list[str]:
+def _build_pages_by_scene_all(all_scripts: list[dict]) -> dict[str, list[dict]]:
+    """Aggregate pages_by_scene across ALL chapter scripts (latest chapter wins for same scene_id)."""
+    merged: dict[str, list[dict]] = {}
+    for cs in all_scripts:
+        for sid, pages in _script_pages_by_scene(cs).items():
+            merged[sid] = pages  # later scripts overwrite earlier; all_scripts sorted by chapter_number
+    return merged
+
+
+def _assemble_scenes_lines(files: dict, all_scripts: list[dict] | None = None) -> list[str]:
     """Build full scene-card export with chapter-script dialogue/SFX/visuals injected per scene."""
     po = files.get("plot_outline", {})
     ms = files.get("master_story", {}) or {}
@@ -992,8 +1177,17 @@ def _assemble_scenes_lines(files: dict) -> list[str]:
     chapters = _as_list((po.get("chapter_or_episode_list", {}) or {}).get("chapters", []))
     scene_cards = _as_list((po.get("scene_cards", {}) or {}).get("scenes", []))
     scenes_by_chapter = _group_scenes_by_chapter(scene_cards)
-    pages_by_scene = _script_pages_by_scene(cs)
-    script_chapter_id = _safe((cs.get("chapter_metadata") or {}).get("chapter_id"))
+
+    # Use all chapter scripts if provided; otherwise fall back to the single current one
+    if all_scripts:
+        pages_by_scene = _build_pages_by_scene_all(all_scripts)
+        chapters_with_script: set[str] = {
+            _safe((s.get("chapter_metadata") or {}).get("chapter_id"))
+            for s in all_scripts
+        }
+    else:
+        pages_by_scene = _script_pages_by_scene(cs)
+        chapters_with_script = {_safe((cs.get("chapter_metadata") or {}).get("chapter_id"))}
 
     if not chapters and not scene_cards:
         lines.append("No scenes found. Add scenes in the Scene Cards studio.")
@@ -1011,7 +1205,7 @@ def _assemble_scenes_lines(files: dict) -> list[str]:
         _append_field(lines, "Chapter summary", chapter.get("summary"))
         _append_field(lines, "Chapter conflict", chapter.get("main_conflict"))
         _append_field(lines, "Chapter hook", chapter.get("ending_cliffhanger") or chapter.get("twist_or_hook"))
-        if chapter_id and chapter_id == script_chapter_id:
+        if chapter_id and chapter_id in chapters_with_script:
             lines.append("Script: AVAILABLE (panel content shown per scene below)")
         elif chapter_id:
             lines.append("Script: not generated for this chapter yet")
@@ -1061,6 +1255,196 @@ def _assemble_scenes_lines(files: dict) -> list[str]:
     return lines
 
 
+# ─── validation ─────────────────────────────────────────────────────────────
+
+def _validate_export(files: dict, all_scripts: list[dict]) -> dict:
+    """Surface data-quality issues that the export tool can't fix on its own.
+
+    Each warning has level (critical/high/medium/info), category, message, where.
+    Designed to mirror the G-Ink Studio compatibility requirements so the user
+    sees what's missing before downloading.
+    """
+    warnings: list[dict] = []
+    ms = files.get("master_story", {}) or {}
+    ch = files.get("characters", {}) or {}
+    po = files.get("plot_outline", {}) or {}
+
+    # 1. Pages-per-chapter sanity (missing scene_cards causes single-page chapters)
+    chapters = _as_list((po.get("chapter_or_episode_list", {}) or {}).get("chapters", []))
+    scene_cards = _as_list((po.get("scene_cards", {}) or {}).get("scenes", []))
+    scenes_by_chapter: dict[str, list] = {}
+    for sc in scene_cards:
+        if isinstance(sc, dict):
+            cid = _safe(sc.get("chapter_id"))
+            if cid:
+                scenes_by_chapter.setdefault(cid, []).append(sc)
+
+    pages_by_chapter: dict[str, list] = {}
+    for cs in all_scripts:
+        cid = _safe((cs.get("chapter_metadata") or {}).get("chapter_id"))
+        if cid:
+            pages_by_chapter[cid] = _as_list(cs.get("pages"))
+
+    for chap in chapters:
+        if not isinstance(chap, dict):
+            continue
+        cid = _safe(chap.get("chapter_id"))
+        ch_num = _safe(chap.get("chapter_number")) or "?"
+        scene_count = len(scenes_by_chapter.get(cid, []))
+        page_count = len(pages_by_chapter.get(cid, []))
+        if scene_count >= 2 and page_count <= 1:
+            warnings.append({
+                "level": "high",
+                "category": "missing_pages",
+                "message": (
+                    f"Chapter {ch_num} has {scene_count} scenes defined but only {page_count} page(s) in script. "
+                    "Regenerate the script after scenes are populated to expand to one page per scene."
+                ),
+                "where": "Studio → Manga Script → Generate (per chapter)",
+            })
+
+    # 2. Speakers without character profiles
+    profiles = _as_list(ch.get("created_major_character_profiles", [])) + _as_list(ch.get("created_side_character_profiles", []))
+    profile_names_lower: set[str] = set()
+    for p in profiles:
+        if isinstance(p, dict):
+            n = _safe(p.get("character_name") or p.get("name"))
+            if n:
+                profile_names_lower.add(n.lower())
+
+    speakers_seen: set[str] = set()
+    for cs in all_scripts:
+        for page in _as_list(cs.get("pages")):
+            if not isinstance(page, dict):
+                continue
+            for panel in _as_list(page.get("panels")):
+                if not isinstance(panel, dict):
+                    continue
+                for d in _as_list(panel.get("dialogue", [])):
+                    if not isinstance(d, dict):
+                        continue
+                    speaker = _safe(d.get("speaker_name") or d.get("speaker") or d.get("speaker_id"))
+                    if speaker:
+                        speakers_seen.add(speaker.lower())
+
+    skip_speakers = {"narrator", "narration", "?", ""}
+    missing_speakers = sorted(s for s in speakers_seen if s not in skip_speakers and s not in profile_names_lower)
+    for speaker in missing_speakers:
+        warnings.append({
+            "level": "high",
+            "category": "missing_profile",
+            "message": (
+                f"Speaker '{speaker}' has dialogue but no character profile. "
+                "G-Ink Studio will skip this character; add a major or side profile."
+            ),
+            "where": "Studio → Cast (major) or Side Characters",
+        })
+
+    # 3. FACTION VISUALS missing when factions defined
+    factions_block = ms.get("major_factions_and_ruling_sides", {}) or {}
+    factions = _text_list(factions_block.get("selected", []) if isinstance(factions_block, dict) else [])
+    factions = [f for f in factions if f and f != "Custom"]
+    sigs = _as_list((ms.get("faction_visual_signatures", {}) or {}).get("signatures", []))
+    sigs = [s for s in sigs if isinstance(s, dict) and _safe(s.get("faction_name")) and _safe(s.get("visual_signature"))]
+    if factions and not sigs:
+        warnings.append({
+            "level": "medium",
+            "category": "missing_faction_visuals",
+            "message": (
+                f"{len(factions)} faction(s) defined but no FACTION VISUALS populated. "
+                "Without visual signatures, faction-specific gear can't be injected into panel prompts."
+            ),
+            "where": "Studio → Faction Visuals",
+        })
+
+    # 4. LOCATIONS section empty
+    locs = _as_list((po.get("locations", {}) or {}).get("locations", []))
+    if not locs:
+        warnings.append({
+            "level": "critical",
+            "category": "missing_locations",
+            "message": (
+                "No LOCATIONS defined. The studio falls back to keyword heuristics; "
+                "AI prompts will be inconsistent across panels."
+            ),
+            "where": "Studio → Locations",
+        })
+
+    # 5. Pages without location_id (≥30% threshold)
+    pages_without_loc = 0
+    total_pages = 0
+    for cs in all_scripts:
+        for page in _as_list(cs.get("pages")):
+            if not isinstance(page, dict):
+                continue
+            total_pages += 1
+            if not _safe(page.get("location_id")):
+                pages_without_loc += 1
+    if total_pages > 0 and pages_without_loc / total_pages >= 0.3:
+        warnings.append({
+            "level": "medium",
+            "category": "missing_location_id",
+            "message": (
+                f"{pages_without_loc}/{total_pages} pages have no location_id. "
+                "Run 'Generate All' in Visuals Studio so each panel resolves to a named location."
+            ),
+            "where": "Studio → Visuals Studio",
+        })
+
+    # 6. Character names not lowercased in source data (info — export auto-lowers)
+    upper_names: list[str] = []
+    for p in profiles:
+        if isinstance(p, dict):
+            n = _safe(p.get("character_name") or p.get("name"))
+            if n and n != n.lower():
+                upper_names.append(n)
+    if upper_names:
+        sample = ", ".join(upper_names[:5]) + (f" (+{len(upper_names) - 5} more)" if len(upper_names) > 5 else "")
+        warnings.append({
+            "level": "info",
+            "category": "name_case",
+            "message": (
+                f"Character profile name(s) not lowercased: {sample}. "
+                "Export auto-lowercases for studio compatibility, but consider renaming in the source."
+            ),
+            "where": "Studio → Cast",
+        })
+
+    return {"warnings": warnings, "count": len(warnings)}
+
+
+def _format_validation_lines(report: dict) -> list[str]:
+    """Render the validation report as a list of markdown-friendly lines."""
+    lines: list[str] = ["VALIDATION REPORT", "=" * 17, ""]
+    warnings = _as_list(report.get("warnings"))
+    if not warnings:
+        lines.append("No issues detected. Story export is fully compatible with G-Ink Studio.")
+        return lines
+
+    lines.append(f"{len(warnings)} issue(s) detected. Review below before importing into G-Ink Studio.")
+    lines.append("")
+
+    by_level: dict[str, list[dict]] = {}
+    for w in warnings:
+        by_level.setdefault(_safe(w.get("level"), "info"), []).append(w)
+
+    for level in ["critical", "high", "medium", "info"]:
+        items = by_level.get(level, [])
+        if not items:
+            continue
+        lines.append(f"{level.upper()} ({len(items)})")
+        lines.append("-" * (len(level) + len(str(len(items))) + 3))
+        for w in items:
+            cat = _safe(w.get("category"))
+            msg = _safe(w.get("message"))
+            where = _safe(w.get("where"))
+            lines.append(f"[{cat}] {msg}")
+            if where:
+                lines.append(f"  Where to fix: {where}")
+            lines.append("")
+    return lines
+
+
 @router.get("/story")
 def export_story(
     story_id: str,
@@ -1074,7 +1458,8 @@ def export_story(
         "story",
     )
     safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title).strip().replace(" ", "_")
-    lines = _assemble_story_lines(files)
+    all_scripts = _all_chapter_scripts(story_id, registry)
+    lines = _assemble_story_lines(files, all_scripts=all_scripts)
 
     if fmt == "txt":
         content = _lines_to_text(lines).encode("utf-8")
@@ -1109,7 +1494,8 @@ def export_scenes(
         "story",
     )
     safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title).strip().replace(" ", "_")
-    lines = _assemble_scenes_lines(files)
+    all_scripts = _all_chapter_scripts(story_id, registry)
+    lines = _assemble_scenes_lines(files, all_scripts=all_scripts)
 
     if fmt == "txt":
         content = _lines_to_text(lines).encode("utf-8")
@@ -1207,6 +1593,68 @@ def export_visuals_bundle(
         content=buf.read(),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{safe_title}_visuals_bundle.zip"'},
+    )
+
+
+@router.get("/validate")
+def export_validate(
+    story_id: str,
+    registry: SQLiteRegistry = Depends(get_registry),
+):
+    """Surface data-quality issues that the export tool cannot fix on its own.
+
+    Returns a list of warnings (level, category, message, where) so the frontend
+    can render them above the download buttons. Mirrors the same checks that
+    populate validation_report.md inside the triple-zip.
+    """
+    files = _get_all_files(story_id, registry)
+    all_scripts = _all_chapter_scripts(story_id, registry)
+    report = _validate_export(files, all_scripts)
+    return ok(report)
+
+
+@router.get("/triple-zip")
+def export_triple_zip(
+    story_id: str,
+    registry: SQLiteRegistry = Depends(get_registry),
+):
+    """ZIP bundle containing the three G-Ink Studio asset files:
+        {title}-story.md   — narrative structure, characters, arc overview, faction visuals
+        {title}-visuals.md — character sheets, locations section, per-chapter panel breakdown
+        {title}-scenes.md  — scene cards with dialogue injected from all chapter scripts
+    """
+    files = _get_all_files(story_id, registry)
+    ms = files.get("master_story", {}) or {}
+    title = _safe(ms.get("title") or ms.get("story_title"), "story")
+    safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title).strip().replace(" ", "_") or story_id
+    all_scripts = _all_chapter_scripts(story_id, registry)
+
+    story_md = _lines_to_markdown(_assemble_story_lines(files, all_scripts=all_scripts))
+    visuals_md = _lines_to_markdown(_assemble_visuals_lines(files, all_scripts=all_scripts))
+    scenes_md = _lines_to_markdown(_assemble_scenes_lines(files, all_scripts=all_scripts))
+    validation_md = _lines_to_markdown(_format_validation_lines(_validate_export(files, all_scripts)))
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{safe_title}-story.md", story_md)
+        zf.writestr(f"{safe_title}-visuals.md", visuals_md)
+        zf.writestr(f"{safe_title}-scenes.md", scenes_md)
+        zf.writestr("validation_report.md", validation_md)
+        readme = (
+            f"# {title} — G-Ink Studio Asset Bundle\n\n"
+            f"- {safe_title}-story.md: narrative structure, characters, arc overview\n"
+            f"- {safe_title}-visuals.md: character visual sheets, location prompts, panel breakdowns\n"
+            f"- {safe_title}-scenes.md: scene cards with dialogue scripts for all chapters\n"
+            f"- validation_report.md: data-quality issues to address before importing\n\n"
+            "Import the three asset files into G-Ink Studio to populate the project.\n"
+        )
+        zf.writestr("README.md", readme)
+
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_title}_gink_bundle.zip"'},
     )
 
 

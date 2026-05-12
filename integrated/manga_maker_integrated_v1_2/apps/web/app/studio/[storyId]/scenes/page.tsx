@@ -29,6 +29,8 @@ type SceneForm = {
   custom_scene_details: string;
 };
 
+type SceneBeat = { beat: string; location: string; time: string };
+
 type SceneRecommendation = {
   chapter_id: string;
   chapter_number?: number;
@@ -36,7 +38,7 @@ type SceneRecommendation = {
   current_scene_count?: number;
   recommended_scene_count?: number;
   reason?: string;
-  must_cover_beats?: string[];
+  must_cover_beats?: SceneBeat[];
 };
 
 function emptyForm(chapterId: string, order: number): SceneForm {
@@ -51,6 +53,8 @@ export default function ScenesPage() {
   const content = (plot.data?.content || plot.data || {}) as any;
   const chapters = content.chapter_or_episode_list?.chapters || [];
   const scenes = content.scene_cards?.scenes || [];
+  const locationsList: { name: string; location_id: string }[] = (content.locations?.locations || []).filter((l: any) => l?.name);
+  const TIME_OPTIONS = ["Dawn", "Morning", "Afternoon", "Evening", "Night", "Midnight"];
 
   const createScene = useMutation({ mutationFn: (body: any) => api.createScene(storyId, body), onSuccess: () => plot.refetch() });
   const deleteSceneMut = useMutation({ mutationFn: (sceneId: string) => api.deleteScene(storyId, sceneId), onSuccess: () => plot.refetch() });
@@ -84,7 +88,12 @@ export default function ScenesPage() {
         ending_cliffhanger: ch.ending_cliffhanger,
         existing_scene_count: scenes.filter((s: any) => s.chapter_id === ch.chapter_id).length,
       }));
-    return { chapter_ids: selectedChapters, target_chapters: targetChapters, scenes_per_chapter: scenesPerChapter };
+    return {
+      chapter_ids: selectedChapters,
+      target_chapters: targetChapters,
+      scenes_per_chapter: scenesPerChapter,
+      available_locations: locationsList.map((l) => l.name),
+    };
   }
 
   const aiGen = useMutation({
@@ -206,7 +215,13 @@ export default function ScenesPage() {
         current_scene_count: Number(rec.current_scene_count) || scenes.filter((s: any) => s.chapter_id === rec.chapter_id).length,
         recommended_scene_count: Math.max(1, Math.min(8, Number(rec.recommended_scene_count) || Number(rec.scene_count) || 3)),
         reason: rec.reason || "Recommended from chapter complexity and pacing.",
-        must_cover_beats: Array.isArray(rec.must_cover_beats) ? rec.must_cover_beats : [],
+        must_cover_beats: Array.isArray(rec.must_cover_beats)
+          ? rec.must_cover_beats.map((b: any) =>
+              typeof b === "string"
+                ? { beat: b, location: "", time: "" }
+                : { beat: b.beat || b.scene_goal || "", location: b.location || "", time: b.time || "" }
+            )
+          : [],
       }));
   }
 
@@ -230,21 +245,21 @@ export default function ScenesPage() {
     const toCreate = Math.max(0, target - current);
     if (toCreate === 0) return { created: 0, skipped: true };
 
-    const beats = (rec.must_cover_beats || []).filter(Boolean);
+    const beats = (rec.must_cover_beats || []).filter((b) => b.beat || b.location);
     setApplyingRecChapterId(rec.chapter_id);
     try {
       for (let i = 0; i < toCreate; i++) {
-        // If beats > slots, fold the leftover beats into the last new scene's goal.
         const isLastSlot = i === toCreate - 1;
-        const beatForSlot = isLastSlot && beats.length > toCreate
-          ? beats.slice(i).join(" / ")
-          : beats[i] || "";
+        const beatsForSlot = isLastSlot && beats.length > toCreate ? beats.slice(i) : [beats[i]].filter(Boolean);
+        const beatText = beatsForSlot.map((b) => b.beat).filter(Boolean).join(" / ");
+        const beatLocation = beatsForSlot[0]?.location || "";
+        const beatTime = beatsForSlot[0]?.time || "";
         await api.createScene(storyId, {
           chapter_id: rec.chapter_id,
-          location: "",
-          time: "",
+          location: beatLocation,
+          time: beatTime,
           characters_present: [],
-          scene_goal: beatForSlot,
+          scene_goal: beatText,
           scene_conflict: "",
           relationship_dynamic_used: "",
           new_information_revealed: "",
@@ -269,8 +284,14 @@ export default function ScenesPage() {
         alert(`Ch.${rec.chapter_number || "?"} already has the recommended ${rec.recommended_scene_count} scene(s) — nothing to add.`);
         return;
       }
-      await plot.refetch();
-      alert(`Created ${created} scene placeholder${created === 1 ? "" : "s"} for Ch.${rec.chapter_number || "?"}. Open each one to flesh out details, or run AI Generate Scenes for a full draft.`);
+      // Refetch to get the newly created scenes, then AI-fill their location & time
+      const refetched = await plot.refetch();
+      if (locationsList.length > 0) {
+        const freshContent = (refetched.data?.content || refetched.data || {}) as any;
+        const freshScenes: any[] = (freshContent.scene_cards?.scenes || []).filter((s: any) => s.chapter_id === rec.chapter_id);
+        await fillChapterLocationTime(rec.chapter_id, freshScenes);
+        await plot.refetch();
+      }
     } catch (e: any) {
       alert(`Failed to apply recommendation: ${e?.message || "unknown error"}`);
     }
@@ -282,16 +303,23 @@ export default function ScenesPage() {
       alert("All recommendations have already been applied.");
       return;
     }
-    if (!confirm(`Apply ${pending.length} recommendation${pending.length === 1 ? "" : "s"}? This appends scene placeholders to each chapter using the suggested beats. Existing scenes are kept.`)) return;
+    if (!confirm(`Apply ${pending.length} recommendation${pending.length === 1 ? "" : "s"}? Scenes will be created and AI will assign location & time to each one.`)) return;
     setApplyAllRecsRunning(true);
-    let createdTotal = 0;
     try {
       for (const rec of pending) {
-        const { created } = await applyRecommendation(rec);
-        createdTotal += created;
+        await applyRecommendation(rec);
       }
-      await plot.refetch();
-      alert(`Created ${createdTotal} scene placeholder${createdTotal === 1 ? "" : "s"} across ${pending.length} chapter${pending.length === 1 ? "" : "s"}.`);
+      // Refetch once, then AI-fill all affected chapters
+      const refetched = await plot.refetch();
+      if (locationsList.length > 0) {
+        const freshContent = (refetched.data?.content || refetched.data || {}) as any;
+        const freshScenes: any[] = freshContent.scene_cards?.scenes || [];
+        for (const rec of pending) {
+          const chScenes = freshScenes.filter((s: any) => s.chapter_id === rec.chapter_id);
+          await fillChapterLocationTime(rec.chapter_id, chScenes);
+        }
+        await plot.refetch();
+      }
     } catch (e: any) {
       alert(`Failed to apply all: ${e?.message || "unknown error"}`);
     } finally {
@@ -400,12 +428,112 @@ export default function ScenesPage() {
     setShowModal(false);
   }
 
+  const scenesNeedingLocation = scenes.filter((s: any) => !s.location || !s.time);
+  const [autoFillRunning, setAutoFillRunning] = useState(false);
+  const [autoFillStatus, setAutoFillStatus] = useState("");
+
+  // Core helper: AI-fill location & time for a specific chapter's scenes.
+  // Takes the scenes array explicitly so it works on freshly-fetched data.
+  async function fillChapterLocationTime(chId: string, chapterScenes: any[]): Promise<number> {
+    if (locationsList.length === 0 || chapterScenes.length === 0) return 0;
+    const res = await api.aiGenerate(storyId, {
+      page: "scenes",
+      target_fields: ["scenes_for_chapter"],
+      partial_input: {
+        selected_chapter_ids: [chId],
+        scenes_for_chapter: chapterScenes.map((s: any) => ({
+          scene_id: s.scene_id,
+          chapter_id: s.chapter_id,
+          scene_order: s.scene_order,
+          scene_goal: s.scene_goal || "",
+          scene_conflict: s.scene_conflict || "",
+          location: s.location || "",
+          time: s.time || "",
+        })),
+      },
+      generation_hints: {
+        chapter_ids: [chId],
+        available_locations: locationsList.map((l) => l.name),
+        fill_location_time_only: true,
+        existing_scene_count: chapterScenes.length,
+      },
+    }) as any;
+    const gen = res?.generated_fields || res || {};
+    const returned: any[] = Array.isArray(gen.scenes_for_chapter) ? gen.scenes_for_chapter : [];
+    let updated = 0;
+    for (let idx = 0; idx < returned.length; idx++) {
+      const aiScene = returned[idx];
+      const loc = aiScene.location || "";
+      const time = aiScene.time || "";
+      if (!loc && !time) continue;
+      const match = chapterScenes.find((s: any) => s.scene_id === aiScene.scene_id)
+        ?? (idx < chapterScenes.length ? chapterScenes[idx] : null);
+      if (!match) continue;
+      await api.createScene(storyId, {
+        scene_id: match.scene_id,
+        chapter_id: match.chapter_id,
+        scene_order: match.scene_order,
+        location: loc || match.location || "",
+        time: time || match.time || "",
+        characters_present: match.characters_present || [],
+        scene_goal: match.scene_goal || "",
+        scene_conflict: match.scene_conflict || "",
+        relationship_dynamic_used: match.relationship_dynamic_used || "",
+        new_information_revealed: match.new_information_revealed || "",
+        action_or_dialogue_focus: match.action_or_dialogue_focus || "",
+        visual_manga_moment: match.visual_manga_moment || "",
+        panel_mood: match.panel_mood || "",
+        ending_beat: match.ending_beat || "",
+        custom_scene_details: match.custom_scene_details || "",
+      });
+      updated++;
+    }
+    return updated;
+  }
+
+  async function handleAutoFillLocationTime() {
+    if (locationsList.length === 0) return;
+    const chapterIds = [...new Set(scenesNeedingLocation.map((s: any) => s.chapter_id))] as string[];
+    if (chapterIds.length === 0) return;
+    setAutoFillRunning(true);
+    setAutoFillStatus("Asking AI to assign locations and times…");
+    let total = 0;
+    try {
+      for (const chId of chapterIds) {
+        const chapterScenes = scenes.filter((s: any) => s.chapter_id === chId);
+        total += await fillChapterLocationTime(chId, chapterScenes);
+        setAutoFillStatus(`Updated ${total} scene(s)…`);
+      }
+      await plot.refetch();
+      setAutoFillStatus(`Done — updated ${total} scene(s).`);
+    } catch (e: any) {
+      setAutoFillStatus(`Failed: ${e?.message || "unknown error"}`);
+    } finally {
+      setAutoFillRunning(false);
+    }
+  }
+
   const resultCount = generatedScenes(aiSceneResults).length;
 
   return (
     <>
       <div className="grid gap-4 sm:gap-5 lg:grid-cols-[1.1fr_0.9fr]">
         <Panel title="Scene Cards" subtitle="Manage scenes grouped by chapter. Each scene becomes manga panels.">
+          {scenesNeedingLocation.length > 0 && locationsList.length > 0 && (
+            <div className="mb-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-black text-amber-800">{scenesNeedingLocation.length} scene(s) missing location or time</p>
+                {autoFillStatus && <p className="mt-0.5 text-xs text-amber-700">{autoFillStatus}</p>}
+              </div>
+              <button
+                className="rounded-xl border-2 border-amber-600 bg-amber-600 px-3 py-1.5 text-xs font-black text-white disabled:opacity-50"
+                disabled={autoFillRunning}
+                onClick={handleAutoFillLocationTime}
+              >
+                {autoFillRunning ? "AI filling…" : "AI Auto-fill Location & Time"}
+              </button>
+            </div>
+          )}
           <div className="rounded-xl border-2 border-slate-200 bg-white p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-xs font-black">Select chapters for AI generation:</h4>
@@ -493,8 +621,12 @@ export default function ScenesPage() {
                         {rec.reason && <p className="mt-2 text-xs text-slate-700">{rec.reason}</p>}
                         {rec.must_cover_beats && rec.must_cover_beats.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
-                            {rec.must_cover_beats.map((beat) => (
-                              <span key={beat} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-bold text-slate-600">{beat}</span>
+                            {rec.must_cover_beats.map((beat, bi) => (
+                              <span key={bi} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                {beat.beat}
+                                {beat.location && <span className="ml-1 text-indigo-500">· {beat.location}</span>}
+                                {beat.time && <span className="ml-1 text-amber-500">· {beat.time}</span>}
+                              </span>
                             ))}
                           </div>
                         )}
@@ -557,8 +689,37 @@ export default function ScenesPage() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Field label="Chapter ID" value={form.chapter_id} onChange={(v) => setForm((f) => ({ ...f, chapter_id: v }))} />
               <Field label="Scene order" value={String(form.scene_order)} onChange={(v) => setForm((f) => ({ ...f, scene_order: parseInt(v) || 1 }))} />
-              <Field label="Location" value={form.location} onChange={(v) => setForm((f) => ({ ...f, location: v }))} />
-              <Field label="Time" value={form.time} onChange={(v) => setForm((f) => ({ ...f, time: v }))} />
+              <div>
+                <label className="block text-sm font-black">Location</label>
+                {locationsList.length > 0 ? (
+                  <select
+                    className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
+                    value={form.location}
+                    onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+                  >
+                    <option value="">— pick a location —</option>
+                    {locationsList.map((l) => <option key={l.location_id} value={l.name}>{l.name}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
+                    value={form.location}
+                    onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+                    placeholder="Add locations in the Locations step first"
+                  />
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-black">Time of day</label>
+                <select
+                  className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base"
+                  value={form.time}
+                  onChange={(e) => setForm((f) => ({ ...f, time: e.target.value }))}
+                >
+                  <option value="">— pick a time —</option>
+                  {TIME_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
               <div>
                 <label className="block text-sm font-black">Characters present</label>
                 <select multiple className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base min-h-[80px]" value={form.characters_present.split(",").map((s) => s.trim()).filter(Boolean)} onChange={(e) => { const vals = Array.from(e.target.selectedOptions, (o) => o.value); setForm((f) => ({ ...f, characters_present: vals.join(", ") })); }}>

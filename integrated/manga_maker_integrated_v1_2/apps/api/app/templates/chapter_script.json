@@ -61,6 +61,7 @@
       "scene_order": 1,
       "scene_title": "",
       "scene_purpose": "",
+      "location_id": "",
       "location": "",
       "time": "",
       "characters_present": [],
@@ -85,6 +86,11 @@
         {
           "panel_id": "panel_001",
           "panel_number": 1,
+          "location_id": "",
+          "render_mode": {
+            "selected": "t2i",
+            "options": ["t2i", "i2i", "layered"]
+          },
           "panel_size": {
             "selected": "",
             "options": [

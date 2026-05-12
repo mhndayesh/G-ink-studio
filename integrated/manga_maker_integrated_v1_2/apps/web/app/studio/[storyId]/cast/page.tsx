@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { AI_EMPTY_MESSAGE, getUsableAiOutput } from "@/lib/aiResults";
@@ -9,7 +9,7 @@ import { useHydrateOnce } from "@/lib/hooks/useHydrate";
 import { Panel } from "@/components/cards/Panel";
 import { Field } from "@/components/forms/Field";
 import { OptionGrid } from "@/components/forms/OptionGrid";
-import { ProfileTabs } from "@/components/forms/ProfileTabs";
+import { ProfileTabs, PROFILE_OPTS } from "@/components/forms/ProfileTabs";
 import { AiFillPanel } from "@/components/forms/AiFillPanel";
 import { StructuredJsonView } from "@/components/cards/StructuredJsonView";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -52,6 +52,7 @@ function deepMergeProfile(base: Record<string, any>, updates: Record<string, any
 
 export default function CastPage() {
   const { storyId } = useParams<{ storyId: string }>();
+  const qc = useQueryClient();
   const chars = useQuery({ queryKey: ["characters", storyId], queryFn: () => api.getCharacters(storyId) });
   const content = (chars.data?.content || chars.data || {}) as any;
   const [structure, setStructure] = useState("");
@@ -63,6 +64,7 @@ export default function CastPage() {
   const [aiResults, setAiResults] = useState<Record<string, any> | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiApplyCounter, setAiApplyCounter] = useState(0);
+  const [charNotes, setCharNotes] = useState("");
   // Hydrate the character-structure picker from saved data so reopening Cast
   // Forge doesn't show "no selection" while the JSON already has a structure.
   useHydrateOnce(!!chars.data, storyId, () => {
@@ -72,10 +74,21 @@ export default function CastPage() {
   });
 
   const setStruct = useMutation({ mutationFn: (body: any) => api.setCharacterStructure(storyId, body), onSuccess: () => chars.refetch() });
-  const createProfile = useMutation({ mutationFn: (body: any) => api.createCharacterProfile(storyId, body), onSuccess: () => { chars.refetch(); setName(""); setSelectedProfile(null); setEditProfileId(null); setProfileData({}); } });
+  const createProfile = useMutation({
+    mutationFn: (body: any) => api.createCharacterProfile(storyId, body),
+    onSuccess: () => {
+      chars.refetch();
+      qc.invalidateQueries({ queryKey: ["status", storyId] });
+      setName(""); setSelectedProfile(null); setEditProfileId(null); setProfileData({}); setCharNotes("");
+    },
+  });
   const updateProfile = useMutation({
     mutationFn: ({ profileId, body }: { profileId: string; body: any }) => api.updateCharacterProfile(storyId, profileId, body),
-    onSuccess: () => { chars.refetch(); setName(""); setSelectedProfile(null); setEditProfileId(null); setProfileData({}); },
+    onSuccess: () => {
+      chars.refetch();
+      qc.invalidateQueries({ queryKey: ["status", storyId] });
+      setName(""); setSelectedProfile(null); setEditProfileId(null); setProfileData({}); setCharNotes("");
+    },
   });
   const deleteProfileMut = useMutation({
     mutationFn: (profileId: string) => api.deleteCharacterProfile(storyId, profileId),
@@ -96,15 +109,26 @@ export default function CastPage() {
 
   const aiGen = useMutation({
     mutationFn: () => {
+      const isCreating = !editProfileId && !!selectedProfile;
       const hints: any = {
-        edit_existing: true,
-        profile_id: editProfileId,
+        edit_existing: !isCreating,
+        profile_id: editProfileId || selectedProfile,
         character_name: name,
       };
+      if (charNotes.trim()) hints.user_character_notes = charNotes.trim();
+      // Pass available option lists for tabs that have selectable chips
+      const opts: Record<string, string[]> = {};
+      if (aiFields.includes("status_role")) { opts.status_options = PROFILE_OPTS.STATUS_OPTS; opts.role_options = PROFILE_OPTS.ROLE_OPTS; }
+      if (aiFields.includes("appearance")) opts.visual_style_options = PROFILE_OPTS.VISUAL_STYLE_OPTS;
+      if (aiFields.includes("faction")) opts.faction_alignment_options = PROFILE_OPTS.FACTION_ALIGN_OPTS;
+      if (aiFields.includes("backstory")) { opts.backstory_type_options = PROFILE_OPTS.BACKSTORY_OPTS; opts.mental_state_options = PROFILE_OPTS.MENTAL_STATE_OPTS; opts.community_place_options = PROFILE_OPTS.COMMUNITY_OPTS; }
+      if (aiFields.includes("personality")) opts.personality_type_options = PROFILE_OPTS.PERSONALITY_OPTS;
+      if (aiFields.includes("powers")) { opts.power_origin_options = PROFILE_OPTS.POWER_ORIGIN_OPTS; opts.power_type_options = PROFILE_OPTS.POWER_TYPE_OPTS; opts.power_level_options = PROFILE_OPTS.POWER_LEVEL_OPTS; }
+      if (aiFields.includes("arc")) opts.arc_type_options = PROFILE_OPTS.ARC_OPTS;
       return api.aiGenerate(storyId, {
         page: "cast",
         target_fields: aiFields,
-        partial_input: { ...profileData, profile_id: editProfileId, character_name: name },
+        partial_input: { ...profileData, profile_id: editProfileId || selectedProfile, character_name: name, ...opts },
         generation_hints: hints,
       });
     },
@@ -168,6 +192,7 @@ export default function CastPage() {
     setSelectedProfile(null);
     setName("");
     setProfileData({});
+    setCharNotes("");
   }
 
   function handleAddCharacter() {
@@ -176,6 +201,7 @@ export default function CastPage() {
     setEditProfileId(null);
     setName("New Character");
     setProfileData({});
+    setCharNotes("");
   }
 
   return (
@@ -220,6 +246,31 @@ export default function CastPage() {
             <>
               <div className="space-y-3">
                 <h3 className="font-black">New Character: {selectedProfile}</h3>
+                <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 sm:rounded-2xl">
+                  <Field
+                    label="Notes / hints to AI"
+                    value={charNotes}
+                    onChange={setCharNotes}
+                    textarea
+                    placeholder="Describe what you want: e.g. 'a quiet swordsman who hides a dark past, loyal to the guild but secretly doubts them'"
+                  />
+                  <p className="mt-1 text-xs text-amber-700 font-bold">These notes guide AI field generation — the more specific, the better.</p>
+                </div>
+                <AiFillPanel
+                  page="cast"
+                  fields={CAST_AI_FIELDS}
+                  note="AI generates fields for this new character using your notes and the full story context. Fill the tabs below or let AI fill them first."
+                  onFieldSelect={setAiFields}
+                  onGenerate={() => aiGen.mutate()}
+                  loading={aiGen.isPending}
+                  results={aiResults}
+                  onClear={() => setAiResults(null)}
+                  onApply={handleApplyAi}
+                  disabled={!name}
+                  disabledReason="Enter a character name before using AI fill."
+                  error={aiError}
+                  onDismissError={() => setAiError(null)}
+                />
                 <ProfileTabs key={`create-${aiApplyCounter}`} resetKey={aiApplyCounter} onDataChange={setProfileData} />
                 <Field label="Character name" value={name} onChange={setName} placeholder="Kai" />
                 {createProfile.isError && <ErrorBanner error={createProfile.error as Error} />}
@@ -233,6 +284,16 @@ export default function CastPage() {
               <div className="flex items-center justify-between">
                 <h3 className="font-black">Editing: {editProfileId}</h3>
                 <button onClick={handleCancelEdit} className="text-xs font-bold text-slate-500 underline">Cancel</button>
+              </div>
+              <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3 sm:rounded-2xl">
+                <Field
+                  label="Notes / hints to AI"
+                  value={charNotes}
+                  onChange={setCharNotes}
+                  textarea
+                  placeholder="e.g. 'give her a cold exterior but show she cares deeply for her team, magic user with fire affinity'"
+                />
+                <p className="mt-1 text-xs text-amber-700 font-bold">These notes are sent to AI with every field generation — describe personality, role, or anything you have in mind.</p>
               </div>
               <AiFillPanel
                 page="cast"

@@ -54,8 +54,8 @@ function StoryReaderPanel({ reader, loading, error }: { reader: StoryReaderDocum
         <p className="text-xs font-black uppercase tracking-widest text-slate-400">{reader.title}</p>
         <h2 className="mt-1 text-xl font-black">{reader.arcTitle}</h2>
         <div className="mt-2 flex flex-wrap gap-2">
-          {reader.arcMeta.map((item) => (
-            <span key={item} className="rounded-full border border-white/15 bg-white/10 px-2 py-1 text-[11px] font-bold text-slate-100">{item}</span>
+          {reader.arcMeta.map((item, i) => (
+            <span key={`${i}-${item}`} className="rounded-full border border-white/15 bg-white/10 px-2 py-1 text-[11px] font-bold text-slate-100">{item}</span>
           ))}
         </div>
       </div>
@@ -64,7 +64,7 @@ function StoryReaderPanel({ reader, loading, error }: { reader: StoryReaderDocum
         <div className="mt-3 rounded-xl border-2 border-slate-200 bg-white p-4">
           <h3 className="text-sm font-black">Arc Overview</h3>
           <div className="mt-2 space-y-2 text-sm leading-relaxed text-slate-700">
-            {reader.overview.map((item) => <p key={item}>{item}</p>)}
+            {reader.overview.map((item, i) => <p key={`${i}-${item}`}>{item}</p>)}
           </div>
         </div>
       )}

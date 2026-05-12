@@ -59,6 +59,44 @@ export default function SeedPage() {
   const endingOptions = content.ending_direction?.options || [];
   const foundationOptions = content.story_foundation?.options || [];
 
+  const [aiFillLoading, setAiFillLoading] = useState(false);
+  const [aiFillError, setAiFillError] = useState<string | null>(null);
+  const [aiFillApplied, setAiFillApplied] = useState(false);
+
+  async function aiFillAll() {
+    setAiFillLoading(true);
+    setAiFillError(null);
+    try {
+      const res = await api.aiFillField(storyId, {
+        page: "seed",
+        target_fields: ["idea_so_far", "story_type", "ending_direction", "story_foundation"],
+        partial_input: {
+          idea_so_far: idea,
+          available_story_types: storyTypes,
+          available_endings: endingOptions,
+          available_foundations: foundationOptions,
+        },
+      });
+      const g = res?.generated || {};
+      if (g.idea_so_far && typeof g.idea_so_far === "string") setIdea(g.idea_so_far);
+      const stSel = g.story_type?.selected;
+      if (Array.isArray(stSel)) {
+        const valid = stSel.filter((v: string) => storyTypes.includes(v));
+        if (valid.length) setTypes(valid);
+      }
+      const endSel = g.ending_direction?.selected ?? g.ending_direction;
+      if (typeof endSel === "string" && endingOptions.includes(endSel)) setEnding(endSel);
+      const foundSel = g.story_foundation?.selected ?? g.story_foundation;
+      if (typeof foundSel === "string" && foundationOptions.includes(foundSel)) setFoundation(foundSel);
+      setAiFillApplied(true);
+      setTimeout(() => setAiFillApplied(false), 4000);
+    } catch (e: any) {
+      setAiFillError(e?.message || "AI fill failed");
+    } finally {
+      setAiFillLoading(false);
+    }
+  }
+
   function toggleType(value: string) { setTypes((old) => old.includes(value) ? old.filter((x) => x !== value) : [...old, value]); }
   async function saveSeed() {
     if (idea) await patch.mutateAsync({ target_branch: "idea_so_far", operation: "replace", value: idea });
@@ -78,11 +116,23 @@ export default function SeedPage() {
               label="AI Suggest Ideas"
               onClick={() => aiExpand.mutate()}
               loading={aiExpand.isPending}
-              disabled={!idea}
+              disabled={!idea || aiFillLoading}
               variant="secondary"
+            />
+            <AiButton
+              label={aiFillLoading ? "Filling…" : "⚡ AI Fill All (idea + selections)"}
+              onClick={aiFillAll}
+              loading={aiFillLoading}
+              disabled={aiFillLoading || aiExpand.isPending}
             />
           </div>
 
+          {aiFillError && <ErrorBanner error={aiFillError} onDismiss={() => setAiFillError(null)} />}
+          {aiFillApplied && (
+            <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 p-2 text-xs font-black text-emerald-700">
+              ✓ AI filled selections and idea — review and edit above, then Save.
+            </div>
+          )}
           {aiError && <ErrorBanner error={aiError} onDismiss={() => setAiError(null)} />}
           {patch.isError && <ErrorBanner error={patch.error as Error} />}
 

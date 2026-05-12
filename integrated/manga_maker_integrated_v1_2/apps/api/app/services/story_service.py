@@ -105,7 +105,6 @@ class StoryService:
         else:
             result["relationship_map"] = "locked"
 
-        plot_threads_filled = False
         chapter_count = 0
         scene_count = 0
         integrity_locked = False
@@ -123,13 +122,19 @@ class StoryService:
                 result["scene_cards"] = "completed"
             else:
                 result["scene_cards"] = "not_started"
+            locs = data.get("locations", {}).get("locations", []) or []
+            named_locs = [l for l in locs if isinstance(l, dict) and l.get("name")]
+            if named_locs:
+                result["locations"] = "completed"
+            else:
+                result["locations"] = "not_started"
             # Propagate integrity lock into phase_status so the frontend can gate pages.
             lock = data.get("story_integrity_lock", {})
             integrity_locked = bool(lock.get("locked"))
             result["integrity_locked"] = "locked" if integrity_locked else "ok"
-            plot_threads_filled = self._plot_threads_have_content(data.get("plot_threads", {}))
         else:
             result["scene_cards"] = "locked"
+            result["locations"] = "locked"
             result["integrity_locked"] = "ok"
 
         if workspace:
@@ -156,12 +161,8 @@ class StoryService:
             unlock_blockers.append("plot_outline_missing")
         if integrity_locked:
             unlock_blockers.append("story_integrity_locked")
-        if not plot_threads_filled:
-            unlock_blockers.append("plot_threads_empty")
         if chapter_count < 1:
             unlock_blockers.append("no_chapters")
-        if scene_count < 1:
-            unlock_blockers.append("no_scenes")
 
         script_data = (script or {}).get("json_copy", {}) if script else {}
         has_real_pages = self._script_has_meaningful_pages(script_data)

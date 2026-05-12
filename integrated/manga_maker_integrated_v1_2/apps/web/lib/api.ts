@@ -114,6 +114,16 @@ export const api = {
     const qs = chapterId ? `?chapter_id=${encodeURIComponent(chapterId)}` : "";
     return apiFetch<any>(`/stories/${storyId}/chapter-script/approve${qs}`, { method: "POST" });
   },
+  generateBatchApprove: (storyId: string, chapterIds: string[] = []) =>
+    apiFetch<{ chapters_processed: number; chapters_failed: number; results: any[]; sync_count?: number; sync_created?: string[] }>(
+      `/stories/${storyId}/chapter-script/generate-batch`,
+      { method: "POST", body: JSON.stringify(chapterIds) },
+    ),
+  fillVisualsAllBatch: (storyId: string, body: { chapter_ids?: string[]; available_locations: any[] }) =>
+    apiFetch<{ chapters_processed: number; chapters_skipped: number; chapters_failed: number; results: any[] }>(
+      `/stories/${storyId}/chapter-script/fill-visuals-batch-all`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   patchChapterScript: (storyId: string, body: any) => apiFetch<any>(`/stories/${storyId}/chapter-script`, { method: "PATCH", body: JSON.stringify(body) }),
   getChapterScriptStatuses: (storyId: string) => apiFetch<any>(`/stories/${storyId}/chapter-script/chapters-status`),
   loadChapterScript: (storyId: string, chapterId: string) => {
@@ -147,6 +157,27 @@ export const api = {
   validatePlotOutline: (storyId: string) => apiFetch<any>(`/stories/${storyId}/plot-outline/validate`, { method: "POST" }),
   validateWorkspace: (storyId: string) => apiFetch<any>(`/stories/${storyId}/plot-workspace/validate`, { method: "POST" }),
   validateChapterScript: (storyId: string) => apiFetch<any>(`/stories/${storyId}/chapter-script/validate`, { method: "POST" }),
+
+  // Locations
+  listLocations: (storyId: string) => apiFetch<any[]>(`/stories/${storyId}/locations`),
+  createLocation: (storyId: string, body: any) => apiFetch<any>(`/stories/${storyId}/locations`, { method: "POST", body: JSON.stringify(body) }),
+  getLocation: (storyId: string, locationId: string) => apiFetch<any>(`/stories/${storyId}/locations/${locationId}`),
+  updateLocation: (storyId: string, locationId: string, body: any) => apiFetch<any>(`/stories/${storyId}/locations/${locationId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteLocation: (storyId: string, locationId: string) => apiFetch<any>(`/stories/${storyId}/locations/${locationId}`, { method: "DELETE" }),
+  aiGenerateAllLocations: (storyId: string, body?: any) => apiFetch<any>(`/stories/${storyId}/locations/ai-generate-all`, { method: "POST", body: JSON.stringify(body || {}) }),
+  aiFillLocation: (storyId: string, locationId: string, body: any) => apiFetch<any>(`/stories/${storyId}/locations/${locationId}/ai-fill`, { method: "POST", body: JSON.stringify(body) }),
+
+  // Universal field fill
+  aiFillField: (storyId: string, body: { page: string; target_fields: string[]; partial_input?: any; generation_hints?: any }) =>
+    apiFetch<any>(`/stories/${storyId}/ai/fill-field`, { method: "POST", body: JSON.stringify(body) }),
+  fillChapterVisuals: (storyId: string, body: { available_locations: any[] }) =>
+    apiFetch<any>(`/stories/${storyId}/ai/fill-chapter-visuals`, { method: "POST", body: JSON.stringify(body) }),
+
+  validateExport: (storyId: string) =>
+    apiFetch<{ warnings: Array<{ level: string; category: string; message: string; where: string }>; count: number }>(`/stories/${storyId}/export/validate`),
+
+  syncScriptSpeakers: (storyId: string) =>
+    apiFetch<{ created: string[]; already_present: string[]; count: number }>(`/stories/${storyId}/characters/sync-script-speakers`, { method: "POST" }),
 
   patchStoryStartWorkflow: (storyId: string, body: any) => apiFetch<any>(`/stories/${storyId}/plot-outline/story-start-workflow`, { method: "PATCH", body: JSON.stringify(body) }),
   // NOTE(dev): extractEvents is disabled — the chapter-script event pipeline is orphaned.
@@ -202,6 +233,8 @@ export const exportApi = {
     _downloadBlob(`/stories/${storyId}/export/visuals?fmt=${fmt}`),
   visualsBundle: (storyId: string) =>
     _downloadBlob(`/stories/${storyId}/export/visuals-bundle`),
+  tripleZip: (storyId: string) =>
+    _downloadBlob(`/stories/${storyId}/export/triple-zip`),
   rawZip: (storyId: string) =>
     _downloadBlob(`/stories/${storyId}/export/raw-zip`),
 };

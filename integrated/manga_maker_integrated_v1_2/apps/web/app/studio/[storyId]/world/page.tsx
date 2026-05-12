@@ -119,12 +119,20 @@ export default function WorldPage() {
   const aiWorldFill = useMutation({
     mutationFn: () => api.aiGenerate(storyId, {
       page: "world",
-      target_fields: ["world_core_details"],
-      partial_input: buildWorldAiInput(),
+      target_fields: ["world_type", "world_master_rules", "major_factions_and_ruling_sides", "major_threats_and_minor_side_threats", "world_core_details"],
+      partial_input: {
+        ...buildWorldAiInput(),
+        available_world_types: content.world_type?.options || [],
+        available_world_rules: content.world_master_rules?.options || [],
+        available_factions: factionOptions,
+        available_threats: content.major_threats_and_minor_side_threats?.options || [],
+        available_minor_threats: minorThreatOptions,
+      },
       generation_hints: {
         active_rule_detail_fields: activeRuleDetailFields().map(({ key }) => key),
         selected_factions: factions.filter((f) => f !== "Custom"),
         selected_minor_threats: minorThreats.filter((t) => t !== "Custom"),
+        fill_selections: true,
       },
     }),
     onSuccess: (data) => {
@@ -238,12 +246,53 @@ export default function WorldPage() {
 
   function applyAiWorldFill(results: Record<string, any>) {
     const generated = results?.world_core_details || results || {};
-    const rulesBlock = generated.world_master_rules || generated.rules || {};
-    const factionsBlock = generated.major_factions_and_ruling_sides || generated.factions || {};
-    const threatsBlock = generated.major_threats_and_minor_side_threats || generated.threats || {};
+    // Selections may arrive at top level OR nested in world_core_details
+    const worldTypeBlock = results?.world_type || generated.world_type || {};
+    const rulesBlock = results?.world_master_rules || generated.world_master_rules || generated.rules || {};
+    const factionsBlock = results?.major_factions_and_ruling_sides || generated.major_factions_and_ruling_sides || generated.factions || {};
+    const threatsBlock = results?.major_threats_and_minor_side_threats || generated.major_threats_and_minor_side_threats || generated.threats || {};
+    const worldTypeOptions: string[] = content.world_type?.options || [];
+    const rulesOptions: string[] = content.world_master_rules?.options || [];
+    const threatsOptions: string[] = content.major_threats_and_minor_side_threats?.options || [];
 
-    if (worldType === "Custom") {
-      const custom = valueFrom(generated.custom_world_type, generated.world_type?.custom_world_type, generated.world_type);
+    // ── Apply selections ────────────────────────────────────────────
+    const wtSel = worldTypeBlock.selected ?? (typeof worldTypeBlock === "string" ? worldTypeBlock : "");
+    if (wtSel && worldTypeOptions.includes(wtSel)) setWorldType(wtSel);
+
+    const rulesSel = rulesBlock.selected;
+    if (Array.isArray(rulesSel) && rulesSel.length > 0) {
+      const valid = rulesSel.filter((r: string) => rulesOptions.includes(r));
+      if (valid.length) setRules(valid);
+    }
+
+    const factionsSel = factionsBlock.selected;
+    let activeFactions = factions; // current state — used below for detail filling
+    if (Array.isArray(factionsSel) && factionsSel.length > 0) {
+      const valid = factionsSel.filter((f: string) => factionOptions.includes(f));
+      if (valid.length) {
+        activeFactions = valid; // use the AI-suggested list for detail filling (avoids stale-closure bug)
+        setFactions(valid);
+        setExpandedFactions((prev) => {
+          const next = { ...prev };
+          for (const f of valid) {
+            if (f !== "Custom" && !next[f]) next[f] = emptyFactionDetail();
+          }
+          return next;
+        });
+      }
+    }
+
+    const threatSel = threatsBlock.major_threat ?? (typeof threatsBlock === "string" ? threatsBlock : "");
+    if (threatSel && threatsOptions.includes(threatSel)) setThreat(threatSel);
+
+    const minorSel = threatsBlock.minor_side_threats;
+    if (Array.isArray(minorSel) && minorSel.length > 0) {
+      const valid = minorSel.filter((t: string) => minorThreatOptions.includes(t));
+      if (valid.length) setMinorThreats(valid);
+    }
+
+    if (worldType === "Custom" || wtSel === "Custom") {
+      const custom = valueFrom(generated.custom_world_type, worldTypeBlock.custom_world_type);
       if (custom) setCustomWorldType(custom);
     }
     if (rules.includes("Custom")) {
@@ -273,7 +322,7 @@ export default function WorldPage() {
     if (generatedFactionDetails && typeof generatedFactionDetails === "object") {
       setExpandedFactions((prev) => {
         const next = { ...prev };
-        for (const faction of factions.filter((f) => f !== "Custom")) {
+        for (const faction of activeFactions.filter((f) => f !== "Custom")) {
           const detail = pickFactionDetail(generatedFactionDetails, faction);
           next[faction] = {
             ...emptyFactionDetail(),

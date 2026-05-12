@@ -193,7 +193,28 @@ export default function PlotBoardPage() {
     },
     onSuccess: () => plot.refetch(),
   });
-  const createChapter = useMutation({ mutationFn: (body: any) => api.createChapter(storyId, body), onSuccess: () => { refreshArcDependentData(); setShowChapterModal(false); } });
+  const createChapter = useMutation({
+    mutationFn: (body: any) => api.createChapter(storyId, body),
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ["status", storyId] });
+      refreshArcDependentData();
+      setShowChapterModal(false);
+      // Auto-save arc overview so the board reflects the created chapter's arc
+      const arcOps = buildArcPatchOps();
+      for (const op of arcOps) {
+        await api.patchArcOverview(storyId, op).catch(() => {});
+      }
+      // Auto-analyze and apply relationship changes (silent, non-blocking)
+      try {
+        const relResult = await api.analyzeRelationships(storyId) as any;
+        const proposals = relResult?.proposed_relationships || [];
+        if (proposals.length > 0) {
+          await api.applyRelationships(storyId, proposals);
+          void chars.refetch();
+        }
+      } catch { /* silent — relationship analysis is best-effort */ }
+    },
+  });
   const aiExpand = useMutation({
     mutationFn: () => api.aiComplete(storyId, { expansion_mode: "Light Expansion", text: arcSummary }),
     onSuccess: (data) => {
@@ -510,6 +531,8 @@ export default function PlotBoardPage() {
       main_characters_used: [], relationships_used: [],
       ending_type_target: "", custom_arc_overview_details: "",
       ...ao,
+      // LLM may return arc_length_type as { selected: "..." } — normalize to string
+      arc_length_type: selectedOptionValue(ao?.arc_length_type ?? ""),
     };
   }
 
@@ -777,7 +800,7 @@ export default function PlotBoardPage() {
                 <div>
                   <h3 className="font-black">Structure plan</h3>
                   <p className="mt-1 text-xs font-bold text-slate-600">
-                    {selectedStructure} · {selectedArcLength} · target {arcLengthSpec.label} · ideal {arcLengthSpec.ideal}
+                    {String(selectedStructure || "")} · {String(selectedArcLength || "")} · target {arcLengthSpec.label} · ideal {arcLengthSpec.ideal}
                   </p>
                 </div>
                 {arcChapterCount > 0 && (

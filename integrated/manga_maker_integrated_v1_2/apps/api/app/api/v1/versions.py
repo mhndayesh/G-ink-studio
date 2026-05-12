@@ -28,3 +28,14 @@ def create_from_approved_events(story_id: str, service: VersionService = Depends
 @router.post("/{version_id}/mark-official")
 def mark_official(story_id: str, version_id: str, service: VersionService = Depends(get_version_service)):
     return ok(service.mark_official(story_id, version_id))
+
+
+@router.post("/resync")
+def resync_current_version(story_id: str, service: VersionService = Depends(get_version_service)):
+    """Re-read all files for the current version from disk into the registry cache.
+
+    Use this to recover from any desync between disk files and the registry
+    (e.g. after manual edits, interrupted saves, or migration). Also runs
+    automatically on every mark-official call.
+    """
+    return ok(service.resync_current_version(story_id))

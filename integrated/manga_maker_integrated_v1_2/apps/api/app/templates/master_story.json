@@ -123,6 +123,17 @@
       "custom_rule_details": ""
     }
   },
+  "faction_visual_signatures": {
+    "note_to_user": "Visual identity per faction — injected into panel AI prompts when characters wear faction gear.",
+    "signatures": [
+      {
+        "faction_name": "",
+        "visual_signature": "",
+        "positive_prompt": "",
+        "negative_prompt": ""
+      }
+    ]
+  },
   "major_factions_and_ruling_sides": {
     "selected": [],
     "custom_factions": "",
@@ -227,6 +238,30 @@
       "Loss Of Humanity",
       "Time Limit Threat",
       "Fake Peace / Hidden War",
+      "Custom"
+    ],
+    "minor_threat_options": [
+      "Rival Faction Scheming",
+      "Internal Betrayal",
+      "Resource Conflict",
+      "Political Manipulation",
+      "Secondary Villain Plot",
+      "Criminal Underworld Rising",
+      "Corrupt Officials",
+      "Cult Activity",
+      "Monster Outbreak",
+      "Curse Outbreak",
+      "Forbidden Magic Disaster",
+      "Artifact / Relic Misuse",
+      "Disease / Plague",
+      "Natural Disaster",
+      "Social Class Oppression",
+      "School Bullying / Academy Threat",
+      "Family Bloodline Curse",
+      "Psychological Breakdown",
+      "Time Limit Threat",
+      "Hidden Villain Plan",
+      "Secret Organization Plot",
       "Custom"
     ],
     "threat_details": {

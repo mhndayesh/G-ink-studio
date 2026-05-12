@@ -2,6 +2,8 @@
 
 A structured manga and novel creation studio. Write your story stage by stage, use AI to fill in any field, and export a complete production bundle — panel breakdowns, per-character AI image prompts, and formatted scripts — ready to hand to your artist.
 
+> **New here?** Read the [Getting Started guide](GETTING-STARTED.md) — step-by-step setup in plain English, no technical experience needed.
+
 ---
 
 ## Quick Start

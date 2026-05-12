@@ -41,6 +41,12 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
   unit tests for `visual_prompt`, `content_inspector`, `script_patch`, `thread_ids`,
   and `export_service` helpers, plus `tests/test_smoke.py` running the e2e workflow
   under pytest. `36 passed`. CI backend job now runs `python -m pytest`.
+- **Frontend now lints clean and builds.** Fixed the one `eslint` *error*
+  (`react/no-unescaped-entities` in `side/page.tsx`), all the pre-existing
+  unused-var/exhaustive-deps warnings, and a pre-existing `next build` failure in
+  `board/page.tsx` (`enrichArc()` had a duplicate `arc_length_type` object key —
+  TS2783). `npm run lint` → no problems; `npm run build` → ok; `npm run smoke` →
+  `"passed": true`.
 
 Other changes in this branch are below; none change backend/frontend behavior
 unless noted.

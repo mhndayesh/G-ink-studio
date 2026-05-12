@@ -279,7 +279,7 @@ export default function ScenesPage() {
 
   async function handleApplyOneRecommendation(rec: SceneRecommendation) {
     try {
-      const { created, skipped } = await applyRecommendation(rec);
+      const { skipped } = await applyRecommendation(rec);
       if (skipped) {
         alert(`Ch.${rec.chapter_number || "?"} already has the recommended ${rec.recommended_scene_count} scene(s) — nothing to add.`);
         return;

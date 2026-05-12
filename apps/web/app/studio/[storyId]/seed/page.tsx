@@ -16,7 +16,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 export default function SeedPage() {
   const { storyId } = useParams<{ storyId: string }>();
   const master = useQuery({ queryKey: ["master", storyId], queryFn: () => api.getMasterStory(storyId) });
-  const content = (master.data?.content || master.data || {}) as any;
+  const content = useMemo(() => (master.data?.content || master.data || {}) as any, [master.data]);
   const [idea, setIdea] = useState("");
   const [ending, setEnding] = useState("");
   const [foundation, setFoundation] = useState("");

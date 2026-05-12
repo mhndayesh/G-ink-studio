@@ -19,8 +19,6 @@ import {
   ARC_LENGTH_OPTS,
   ARC_LENGTH_SPECS,
   STRUCTURE_BEATS,
-  CHAPTER_CONTENT_FIELDS,
-  hasContent,
   isMeaningfulChapter,
   selectedOptionValue,
 } from "./boardModel";
@@ -453,7 +451,7 @@ export default function PlotBoardPage() {
 
   function enrichArc(ao: any): any {
     return {
-      arc_title: "", arc_type: "", arc_number: 1, arc_length_type: "",
+      arc_title: "", arc_type: "", arc_number: 1,
       arc_summary: "", starting_status_quo: "",
       main_story_question: "", central_emotional_question: "",
       main_external_conflict: "", main_internal_conflict: "",

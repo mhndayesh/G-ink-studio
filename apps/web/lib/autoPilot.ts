@@ -52,17 +52,6 @@ export const PHASES: { key: PhaseKey; label: string; targetPage?: string }[] = [
   { key: "export", label: "Export", targetPage: "export" },
 ];
 
-const ALL_PANEL_FIELDS = [
-  "visual",
-  "character_action",
-  "background_details",
-  "facial_expression",
-  "pose_or_body_language",
-  "mood",
-  "narration",
-  "location_id",
-];
-
 const PROFILE_TAB_FIELDS = [
   "status_role",
   "appearance",

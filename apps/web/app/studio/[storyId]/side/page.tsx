@@ -234,7 +234,7 @@ export default function SideCastPage() {
                 textarea
                 placeholder="e.g. 'a grumpy old landlord who secretly protects the protagonist, comedic but has a hidden past'"
               />
-              <p className="mt-1 text-xs text-amber-700 font-bold">These notes are sent to AI with every field generation — describe the character's role, personality, or anything you have in mind.</p>
+              <p className="mt-1 text-xs text-amber-700 font-bold">These notes are sent to AI with every field generation — describe the character&apos;s role, personality, or anything you have in mind.</p>
             </div>
           )}
           {editingIdx !== null && (

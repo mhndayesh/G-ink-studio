@@ -198,7 +198,6 @@ function MasterStoryView({ data }: { data: Record<string, unknown> }) {
             const custom = inner[customKey] as string;
             const detailsKey = `${key}_details`;
             const details = (inner[detailsKey] || inner.details || {}) as Record<string, unknown>;
-            const isEmpty = isEmptySelected(sel) && !custom && !hasValue(details);
             if (!hasValue(sel) && !hasValue(custom) && !hasValue(details)) return null;
             return (
               <CollapsibleSection key={key} title={key} defaultOpen={false}>
@@ -374,7 +373,7 @@ function GenericView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-export function StructuredJsonView({ data, defaultSimple = true }: StructuredJsonViewProps) {
+export function StructuredJsonView({ data }: StructuredJsonViewProps) {
   const [showAll, setShowAll] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
   const fileType = useMemo(() => {

@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Database, ShieldCheck, Sparkles, ChevronDown, Menu, X, LayoutDashboard, BookText, Users, MapPin, PenTool, Film, Search, Lock, CheckCircle, Network, Braces, Download, AlertTriangle } from "lucide-react";
+import { Activity, Database, ShieldCheck, Sparkles, ChevronDown, Menu, X, LayoutDashboard, BookText, Users, MapPin, PenTool, Film, Search, Lock, CheckCircle, Network, Braces, AlertTriangle } from "lucide-react";
 import { phases, STAGES, isPhaseUnlocked } from "@/lib/phases";
 import { NextStep } from "./NextStep";
 import { cn } from "@/lib/utils";

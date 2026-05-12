@@ -206,7 +206,6 @@ export function ProfileTabs({
   const POWER_LEVEL_OPTS = ["No Power", "Unknown Level", "Very Weak", "Weak", "Below Average", "Average", "Above Average", "Strong", "Very Strong", "Elite", "Hero Level", "Captain / Commander Level", "Royal / Noble Level", "Monster Level", "Demon Level", "Divine Level", "Country Level", "World Level", "Planet Level", "Dimension Level", "Multiverse Level", "Broken / Overpowered", "Sealed Power", "Hidden Potential", "Custom"];
   const ARC_OPTS = ["Positive Change Arc", "Negative Change Arc", "Flat Arc", "Corruption Arc", "Redemption Arc", "Revenge Arc", "Coming Of Age Arc", "Healing Arc", "Fall From Grace Arc", "Rise To Leadership Arc", "Power Awakening Arc", "Identity Discovery Arc", "Freedom Arc", "Survival Arc", "Sacrifice Arc", "Tragic Hero Arc", "Villain Origin Arc", "Antihero Softening Arc", "Broken To Whole Arc", "Naive To Mature Arc", "Coward To Brave Arc", "Selfish To Selfless Arc", "Weak To Strong Arc", "Outcast To Belonging Arc", "Custom"];
 
-  const d = data;
   const ad = (data as any).appearance_and_visual_design;
   const fa = (data as any).main_character_faction_alignment;
   const bms = (data as any).character_backstory_mental_state_and_community_place;

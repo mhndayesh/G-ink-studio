@@ -55,7 +55,7 @@ Canonical templates live at `apps/api/app/templates/`.
 | **Characters** | Cast Forge · Side Cast · Relationship Web | Cast needs World; Side needs ≥1 major; Web needs ≥2 majors |
 | **Plot** | Plot Board · Scene Cards · Plot Threads | Board needs Characters; Scenes/Threads need ≥1 chapter + structure |
 | **Write** | Writing Desk · Consequence Court | Desk needs Characters; Court needs workspace analyzed |
-| **Produce** | Manga Script · Export | Script unlocks once threads + chapters + scenes exist; Export at Plot Board completion |
+| **Produce** | Manga Script · Export | Script unlocks once plot outline is completed (structure + ≥1 chapter) + ≥1 named location; Export at same gate |
 | **Review** | Memory Timeline · Continuity Radar · Control Room | Always available |
 
 Every page that triggers an AI call also gates the AI button on its own prerequisites (e.g. Plot Board AI requires arc length + narrative structure; Plot Threads AI requires arc overview filled; Court AI requires ≥1 question).
@@ -114,6 +114,7 @@ Any OpenAI-compatible endpoint works (LM Studio, llama.cpp, vLLM, OpenAI cloud).
 Without them the system runs in deterministic-fallback mode (graph kept in SQLite, vectors hashed locally). Bring them up only when you need real graph/vector behaviour:
 
 ```powershell
+# infra-only (Neo4j + Qdrant); API runs separately on port 8080
 cd infra
 docker compose up -d
 ```

@@ -7,35 +7,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ### Backend (apps/api)
-```bash
-cd apps/api
+```powershell
+cd apps\api
 # First time
 python -m venv .venv
-.venv\Scripts\activate          # Windows
-source .venv/bin/activate       # Linux/Mac
 pip install -r requirements.txt
-cp .env.example .env
+copy .env.example .env
 
-# Run
-uvicorn app.main:app --port 8080   # port 8000 is taken locally; do NOT use --reload (serves stale bytecode on Windows)
+# Run — always use the explicit venv Python; do NOT use bare uvicorn or --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080
 
-# Smoke test (73 checks — run after backend changes)
-python tests/smoke_test.py
+# Smoke test (run after backend changes)
+.\.venv\Scripts\python.exe tests\smoke_test.py
 ```
 
 ### Frontend (apps/web)
-```bash
-cd apps/web
+```powershell
+cd apps\web
 npm install
-cp .env.example .env.local
+copy .env.example .env.local
 npm run dev         # http://localhost:3000
 npm run lint        # ESLint
 npm run smoke       # node scripts/smoke-check.mjs
 ```
 
 ### Full stack
-```bash
-docker compose up --build   # Web :3000, API :8000 (in container), Neo4j :7474, Qdrant :6333
+```powershell
+docker compose up --build   # Web :3000, API :8080 (local), Neo4j :7474, Qdrant :6333
 ```
 
 ---

@@ -18,14 +18,19 @@ The notes below are for anyone (human or agent) working in the repo.
 
 See [`RUN-COMMANDS.md`](RUN-COMMANDS.md). Short version:
 
-```bash
+```powershell
 # backend
-cd apps/api && python -m venv .venv && . .venv/Scripts/activate   # or source .venv/bin/activate
-pip install -r requirements.txt && cp .env.example .env
-python -m uvicorn app.main:app --port 8080        # do NOT use --reload
+cd apps\api
+python -m venv .venv
+pip install -r requirements.txt
+copy .env.example .env
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080   # do NOT use --reload
 
 # frontend (new terminal)
-cd apps/web && npm ci && cp .env.example .env.local && npm run dev
+cd apps\web
+npm ci
+copy .env.example .env.local
+npm run dev
 ```
 
 ## Before you push

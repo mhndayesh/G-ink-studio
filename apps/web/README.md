@@ -54,4 +54,4 @@ npm run dev
 
 ## API Client
 
-39 methods in `lib/api.ts`, mapping 1:1 to backend routes.
+~40 methods in `lib/api.ts`, mapping 1:1 to backend routes.

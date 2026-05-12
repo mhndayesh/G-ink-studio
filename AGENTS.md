@@ -165,17 +165,17 @@ State: Zustand store (`lib/store.ts`). API client: `lib/api.ts` (48 methods). Ty
 
 | Concern | Path |
 |---------|------|
-| FastAPI entrypoint | `integrated/.../apps\api\app\main.py` |
-| Pydantic models | `integrated/.../apps\api\app\models\` |
-| Business logic (15 services) | `integrated/.../apps\api\app\services\` |
-| REST endpoints (62 total) | `integrated/.../apps\api\app\api\v1\` |
-| DB connections | `integrated/.../apps\api\app\db\postgres.py` |
-| SQLite registry | `integrated/.../apps\api\storage\manga_registry.sqlite` |
-| Story file storage | `integrated/.../apps\api\storage\stories\` |
-| Story templates | `integrated/.../apps\api\app\templates\` |
-| Frontend routes | `integrated/.../apps\web\app\studio\[storyId]\` |
-| 6 Stage nav | `integrated/.../apps\web\lib\phases.ts` |
-| Stage-grouped StudioShell | `integrated/.../apps\web\components\studio\StudioShell.tsx` |
+| FastAPI entrypoint | `apps/api/app/main.py` |
+| Pydantic models | `apps/api/app/models/` |
+| Business logic | `apps/api/app/services/` |
+| REST endpoints | `apps/api/app/api/v1/` |
+| DB connections | `apps/api/app/db/postgres.py` |
+| SQLite registry | `apps/api/storage/manga_registry.sqlite` |
+| Story file storage | `apps/api/storage/stories/` |
+| Story templates | `apps/api/app/templates/` |
+| Frontend routes | `apps/web/app/studio/[storyId]/` |
+| 6 Stage nav | `apps/web/lib/phases.ts` |
+| Stage-grouped StudioShell | `apps/web/components/studio/StudioShell.tsx` |
 
 ## What NOT to Do
 
@@ -185,7 +185,7 @@ State: Zustand store (`lib/store.ts`). API client: `lib/api.ts` (48 methods). Ty
 - Don't commit `.env` files or ZIP archives (`.gitignore` covers these).
 - Don't modify `memory_system.json` template — it's frozen per version.
 - Don't re-wire the dead Extract Events pipeline (`story_events`/`json_patches`).
-- Don't add loose copies of the six story-template JSONs to the repo root — the canonical templates are at `integrated/.../apps/api/app/templates/`. The 2026-05-07 cleanup deleted the loose duplicates and updated `.gitignore` accordingly.
+- Don't add loose copies of the six story-template JSONs to the repo root — the canonical templates are at `apps/api/app/templates/`.
 
 ## Detailed Docs
 

@@ -4,8 +4,29 @@ Notable changes. Newest first.
 
 ## Unreleased — `cleanup/repo-hygiene` branch
 
-Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md).
-No backend/frontend behavior changes in this branch unless noted.
+Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
+[`docs/BUNDLE-AUDIT.md`](docs/BUNDLE-AUDIT.md).
+
+- **Visual-prompt policy (new `apps/api/app/services/visual_prompt.py`).** Every
+  AI image prompt the export emits is now short, visual-only and colour-free, and
+  prefixed with the one fixed tag **`black and white Japanese manga style`**.
+  `sanitize_visual_prompt()` strips colour words, lighting/atmosphere/composition
+  talk, "cinematic"/"noir"/"masterpiece"/render-quality noise and per-entity style
+  words; `compile_visual_prompt()` joins + prefixes; `negative_prompt()` gives the
+  standard B&W-manga exclusion list. `llm_service.py` prompt schemas now ask the
+  model for that shape directly (`STYLE_INSTRUCTION`).
+- **BUNDLE-AUDIT export fixes** (`export_service.py`): camera-shot slot drops
+  "Action Shot"/"Reaction Shot"/"Custom" (#2); `Render mode` derived from in-frame
+  named-cast count, with a "pick 2 references" note for 3+ (#3); character &
+  location AI prompts rebuilt clean (#4/#6); object-only panels drop the
+  "Expression: N/A …" line (#8); `export/validate` flags source prompts that still
+  carry colour/lighting/style noise.
+- **Refactor:** `apps/api/app/api/v1/export.py` (~1690-line router) split — the
+  ~45 rendering helpers moved to `apps/api/app/services/export_service.py`; the
+  router is now ~265 lines. Behavior unchanged.
+
+Other changes in this branch are below; none change backend/frontend behavior
+unless noted.
 
 - **Layout flattened.** `apps/api`, `apps/web`, `docs`, `QA`, `infra`, `scripts`,
   `docker-compose.yml`, `CLAUDE.md`, `WORKFLOW.md` lifted out of

@@ -10,6 +10,17 @@ from app.core.errors import MangaMakerError
 from app.repositories.sqlite_registry import SQLiteRegistry
 from app.services.snapshot_service import SnapshotService
 from app.services.validation_service import ValidationService
+from app.services.content_inspector import (
+    chapter_has_content,
+    has_content,
+    meaningful_chapters,
+    meaningful_page_count,
+    meaningful_scenes,
+    page_has_content,
+    plot_threads_have_content,
+    scene_has_content,
+    script_has_meaningful_pages,
+)
 
 if TYPE_CHECKING:
     from app.services.llm_service import LLMService
@@ -117,7 +128,7 @@ class ChapterScriptService:
         plot_record = self.registry.get_current_file(story_id, "plot_outline")
         plot = plot_record["json_copy"] if plot_record else {}
         raw_chapters = plot.get("chapter_or_episode_list", {}).get("chapters", []) if plot else []
-        chapters = self._meaningful_chapters(raw_chapters)
+        chapters = meaningful_chapters(raw_chapters)
         lock = plot.get("story_integrity_lock", {}) if plot else {}
 
         blockers: list[dict[str, str]] = []
@@ -143,7 +154,7 @@ class ChapterScriptService:
         # Determine current phase + the explicit next action
         script_record = self.registry.get_current_file(story_id, "chapter_script")
         script_data = script_record["json_copy"] if script_record else {}
-        has_real_pages = self._script_has_meaningful_pages(script_data)
+        has_real_pages = script_has_meaningful_pages(script_data)
         approved = bool(script_data.get("approval", {}).get("script_approved_by_user", False))
         events_done = script_data.get("chapter_event_extraction", {}).get("status") == "completed"
         next_version_id = script_data.get("memory_update_plan_after_chapter", {}).get("next_version_id", "")
@@ -205,19 +216,19 @@ class ChapterScriptService:
         """
         plot_record = self.registry.get_current_file(story_id, "plot_outline")
         plot = plot_record["json_copy"] if plot_record else {}
-        chapters = self._meaningful_chapters((plot.get("chapter_or_episode_list") or {}).get("chapters", []) or [])
+        chapters = meaningful_chapters((plot.get("chapter_or_episode_list") or {}).get("chapters", []) or [])
 
         snapshots = self.registry.list_files_across_versions(story_id, "chapter_script")
         generated: dict[str, dict[str, Any]] = {}
         for row in snapshots:
             data = row.get("json_copy", {}) or {}
             ch_id = (data.get("chapter_metadata") or {}).get("chapter_id", "")
-            has_real_pages = self._script_has_meaningful_pages(data)
+            has_real_pages = script_has_meaningful_pages(data)
             if ch_id and has_real_pages:
                 generated[ch_id] = {
                     "chapter_status": (data.get("chapter_metadata") or {}).get("chapter_status", "draft"),
                     "approved": (data.get("approval") or {}).get("script_approved_by_user", False),
-                    "pages_count": self._meaningful_page_count(data),
+                    "pages_count": meaningful_page_count(data),
                     "version_id": row.get("version_id", ""),
                     "version_number": row.get("version_number"),
                 }
@@ -228,12 +239,12 @@ class ChapterScriptService:
             cur_data = current_record.get("json_copy", {}) or {}
             cur_ch_id = (cur_data.get("chapter_metadata") or {}).get("chapter_id", "")
             current_chapter_id = cur_ch_id
-            has_real_pages = self._script_has_meaningful_pages(cur_data)
+            has_real_pages = script_has_meaningful_pages(cur_data)
             if cur_ch_id and has_real_pages:
                 generated[cur_ch_id] = {
                     "chapter_status": (cur_data.get("chapter_metadata") or {}).get("chapter_status", "draft"),
                     "approved": (cur_data.get("approval") or {}).get("script_approved_by_user", False),
-                    "pages_count": self._meaningful_page_count(cur_data),
+                    "pages_count": meaningful_page_count(cur_data),
                     "version_id": current_record.get("version_id", ""),
                     "version_number": None,
                     "is_current": True,
@@ -274,7 +285,7 @@ class ChapterScriptService:
 
         record, current_data = self._editable(story_id)
         current_chapter_id = (current_data.get("chapter_metadata") or {}).get("chapter_id", "")
-        current_has_pages = self._script_has_meaningful_pages(current_data)
+        current_has_pages = script_has_meaningful_pages(current_data)
         current_approved = (current_data.get("approval") or {}).get("script_approved_by_user", False)
 
         if current_chapter_id == chapter_id:
@@ -417,7 +428,7 @@ class ChapterScriptService:
         chapter_id_used = chapter.get("chapter_id", "ch_001")
         scenes = self._find_scenes_for_chapter(plot_outline, chapter_id_used)
 
-        if not self._chapter_has_content(chapter):
+        if not chapter_has_content(chapter):
             raise MangaMakerError(
                 "NO_CHAPTERS",
                 "Add at least one real chapter to the plot outline before generating the script.",
@@ -426,7 +437,7 @@ class ChapterScriptService:
 
         # ── guard: prevent overwriting an unapproved chapter script ──────────
         current_chapter_id = (script.get("chapter_metadata") or {}).get("chapter_id", "")
-        current_has_pages = self._script_has_meaningful_pages(script)
+        current_has_pages = script_has_meaningful_pages(script)
         current_approved = (script.get("approval") or {}).get("script_approved_by_user", False)
         if current_has_pages and current_chapter_id and current_chapter_id != chapter_id_used and not current_approved:
             raise MangaMakerError(
@@ -725,7 +736,7 @@ class ChapterScriptService:
         chapter_id_used = chapter.get("chapter_id", chapter_id or "ch_001")
         scenes = self._find_scenes_for_chapter(plot_outline, chapter_id_used)
 
-        if not self._chapter_has_content(chapter):
+        if not chapter_has_content(chapter):
             raise MangaMakerError("NO_CHAPTERS", f"Chapter {chapter_id!r} has no content.", status_code=400)
 
         if not scenes:
@@ -1183,11 +1194,11 @@ class ChapterScriptService:
             id_order = {cid: i for i, cid in enumerate(chapter_ids)}
             id_set = set(chapter_ids)
             chapters_to_process = sorted(
-                [ch for ch in all_chapters if ch.get("chapter_id") in id_set and self._chapter_has_content(ch)],
+                [ch for ch in all_chapters if ch.get("chapter_id") in id_set and chapter_has_content(ch)],
                 key=lambda ch: id_order.get(ch.get("chapter_id", ""), 999),
             )
         else:
-            chapters_to_process = [ch for ch in all_chapters if self._chapter_has_content(ch)]
+            chapters_to_process = [ch for ch in all_chapters if chapter_has_content(ch)]
 
         if not chapters_to_process:
             raise MangaMakerError("NO_CHAPTERS", "No chapters with content found to generate.", status_code=400)
@@ -1255,116 +1266,7 @@ class ChapterScriptService:
 
     # ── unlock helpers ────────────────────────────────────────────────────────
 
-    def _plot_threads_have_content(self, plot_threads: dict[str, Any]) -> bool:
-        """Return True if at least one plot thread has meaningful content."""
-        if not isinstance(plot_threads, dict):
-            return False
-        main = plot_threads.get("main_plot_thread", {})
-        if isinstance(main, dict) and str(main.get("goal", "")).strip():
-            return True
-        for key in ("character_arc_threads", "relationship_threads", "threat_threads", "power_threads"):
-            items = plot_threads.get(key, [])
-            if not isinstance(items, list):
-                continue
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                if any(str(v).strip() for v in item.values() if isinstance(v, str)):
-                    return True
-        return False
-
-    def _meaningful_chapters(self, chapters: list[Any]) -> list[dict[str, Any]]:
-        return [
-            chapter for chapter in chapters
-            if isinstance(chapter, dict) and self._chapter_has_content(chapter)
-        ]
-
-    def _meaningful_scenes(self, scenes: list[Any]) -> list[dict[str, Any]]:
-        return [
-            scene for scene in scenes
-            if isinstance(scene, dict) and self._scene_has_content(scene)
-        ]
-
-    def _chapter_has_content(self, chapter: dict[str, Any]) -> bool:
-        fields = (
-            "chapter_title",
-            "chapter_purpose",
-            "summary",
-            "main_conflict",
-            "emotional_beat",
-            "twist_or_hook",
-            "ending_cliffhanger",
-            "custom_chapter_details",
-        )
-        return any(self._has_content(chapter.get(field)) for field in fields)
-
-    def _scene_has_content(self, scene: dict[str, Any]) -> bool:
-        fields = (
-            "location",
-            "time",
-            "characters_present",
-            "scene_goal",
-            "scene_conflict",
-            "relationship_dynamic_used",
-            "new_information_revealed",
-            "action_or_dialogue_focus",
-            "visual_manga_moment",
-            "panel_mood",
-            "ending_beat",
-            "custom_scene_details",
-        )
-        return any(self._has_content(scene.get(field)) for field in fields)
-
-    def _script_has_meaningful_pages(self, script_data: dict[str, Any]) -> bool:
-        return self._meaningful_page_count(script_data) > 0
-
-    def _meaningful_page_count(self, script_data: dict[str, Any]) -> int:
-        return sum(
-            1 for page in script_data.get("pages", []) or []
-            if isinstance(page, dict) and self._page_has_content(page)
-        )
-
-    def _page_has_content(self, page: dict[str, Any]) -> bool:
-        if self._has_content(page.get("page_purpose")) or self._has_content(page.get("page_mood")):
-            return True
-        for panel in page.get("panels", []) or []:
-            if not isinstance(panel, dict):
-                continue
-            fields = (
-                "visual",
-                "character_action",
-                "background_details",
-                "facial_expression",
-                "pose_or_body_language",
-                "narration",
-                "mood",
-                "continuity_notes",
-                "custom_panel_details",
-            )
-            if any(self._has_content(panel.get(field)) for field in fields):
-                return True
-            for line in panel.get("dialogue", []) or []:
-                if isinstance(line, dict) and self._has_content(line.get("text")):
-                    return True
-            for sfx in panel.get("sound_effects", []) or []:
-                if isinstance(sfx, dict) and (
-                    self._has_content(sfx.get("sfx_text"))
-                    or self._has_content(sfx.get("sfx_meaning"))
-                    or self._has_content(sfx.get("sfx_style_note"))
-                ):
-                    return True
-        return False
-
-    def _has_content(self, value: Any) -> bool:
-        if isinstance(value, str):
-            return bool(value.strip())
-        if isinstance(value, list):
-            return any(self._has_content(item) for item in value)
-        if isinstance(value, dict):
-            if "selected" in value and self._has_content(value.get("selected")):
-                return True
-            return any(self._has_content(v) for k, v in value.items() if k not in {"options"})
-        return value is not None and value is not False
+    # (content predicates moved to app/services/content_inspector.py)
 
     # ── LLM enhancement ───────────────────────────────────────────────────────
 
@@ -1563,7 +1465,7 @@ class ChapterScriptService:
     def approve_script(self, story_id: str, chapter_id: str = "") -> dict[str, Any]:
         record, data = self._editable(story_id)
         self._assert_current_chapter(data, chapter_id=chapter_id, action="approve")
-        if not self._script_has_meaningful_pages(data):
+        if not script_has_meaningful_pages(data):
             raise MangaMakerError(
                 "NO_SCRIPT_PAGES",
                 "Generate script pages before approving the chapter script.",
@@ -1669,7 +1571,7 @@ class ChapterScriptService:
                     return ch
             raise MangaMakerError("CHAPTER_NOT_FOUND", f"Chapter {chapter_id!r} not found in plot outline", status_code=404)
         for chapter in chapters:
-            if isinstance(chapter, dict) and self._chapter_has_content(chapter):
+            if isinstance(chapter, dict) and chapter_has_content(chapter):
                 return chapter
         return {}
 
@@ -1679,10 +1581,10 @@ class ChapterScriptService:
         if chapter_id:
             ch_scenes = [
                 s for s in scenes
-                if isinstance(s, dict) and s.get("chapter_id") == chapter_id and self._scene_has_content(s)
+                if isinstance(s, dict) and s.get("chapter_id") == chapter_id and scene_has_content(s)
             ]
             return sorted(ch_scenes, key=lambda s: s.get("scene_order", 0)) if ch_scenes else []
-        return self._meaningful_scenes(scenes)[:1] if scenes else []
+        return meaningful_scenes(scenes)[:1] if scenes else []
 
     def _find_scene_for_chapter(self, plot_outline: dict[str, Any], chapter_id: str) -> dict[str, Any]:
         result = self._find_scenes_for_chapter(plot_outline, chapter_id)

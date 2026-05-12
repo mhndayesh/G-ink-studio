@@ -7,6 +7,17 @@ from app.core.errors import MangaMakerError
 from app.core.ids import story_id_from_number, version_id_from_number
 from app.repositories.sqlite_registry import SQLiteRegistry
 from app.services.snapshot_service import SnapshotService
+from app.services.content_inspector import (
+    chapter_has_content,
+    has_content,
+    meaningful_chapters,
+    meaningful_page_count,
+    meaningful_scenes,
+    page_has_content,
+    plot_threads_have_content,
+    scene_has_content,
+    script_has_meaningful_pages,
+)
 
 
 class StoryService:
@@ -114,8 +125,8 @@ class StoryService:
             narrative = data.get("narrative_structure", {}).get("selected", "")
             chapters = data.get("chapter_or_episode_list", {}).get("chapters", []) or []
             scenes = data.get("scene_cards", {}).get("scenes", []) or []
-            chapter_count = len(self._meaningful_chapters(chapters))
-            scene_count = len(self._meaningful_scenes(scenes))
+            chapter_count = len(meaningful_chapters(chapters))
+            scene_count = len(meaningful_scenes(scenes))
             if narrative and chapter_count >= 1:
                 result["plot_outline"] = "completed"
             if scene_count >= 1:
@@ -165,7 +176,7 @@ class StoryService:
             unlock_blockers.append("no_chapters")
 
         script_data = (script or {}).get("json_copy", {}) if script else {}
-        has_real_pages = self._script_has_meaningful_pages(script_data)
+        has_real_pages = script_has_meaningful_pages(script_data)
         approved = bool(script_data.get("approval", {}).get("script_approved_by_user", False))
         events_status = script_data.get("chapter_event_extraction", {}).get("status", "")
         next_version_id = script_data.get("memory_update_plan_after_chapter", {}).get("next_version_id", "")
@@ -186,107 +197,7 @@ class StoryService:
 
         return result
 
-    def _meaningful_chapters(self, chapters: list[Any]) -> list[dict[str, Any]]:
-        return [
-            chapter for chapter in chapters
-            if isinstance(chapter, dict) and self._chapter_has_content(chapter)
-        ]
-
-    def _meaningful_scenes(self, scenes: list[Any]) -> list[dict[str, Any]]:
-        return [
-            scene for scene in scenes
-            if isinstance(scene, dict) and self._scene_has_content(scene)
-        ]
-
-    def _chapter_has_content(self, chapter: dict[str, Any]) -> bool:
-        fields = (
-            "chapter_title",
-            "chapter_purpose",
-            "summary",
-            "main_conflict",
-            "emotional_beat",
-            "twist_or_hook",
-            "ending_cliffhanger",
-            "custom_chapter_details",
-        )
-        return any(self._has_content(chapter.get(field)) for field in fields)
-
-    def _scene_has_content(self, scene: dict[str, Any]) -> bool:
-        fields = (
-            "location",
-            "time",
-            "characters_present",
-            "scene_goal",
-            "scene_conflict",
-            "relationship_dynamic_used",
-            "new_information_revealed",
-            "action_or_dialogue_focus",
-            "visual_manga_moment",
-            "panel_mood",
-            "ending_beat",
-            "custom_scene_details",
-        )
-        return any(self._has_content(scene.get(field)) for field in fields)
-
-    def _script_has_meaningful_pages(self, script_data: dict[str, Any]) -> bool:
-        for page in script_data.get("pages", []) or []:
-            if not isinstance(page, dict):
-                continue
-            if self._has_content(page.get("page_purpose")) or self._has_content(page.get("page_mood")):
-                return True
-            for panel in page.get("panels", []) or []:
-                if not isinstance(panel, dict):
-                    continue
-                fields = (
-                    "visual",
-                    "character_action",
-                    "background_details",
-                    "facial_expression",
-                    "pose_or_body_language",
-                    "narration",
-                    "mood",
-                    "continuity_notes",
-                    "custom_panel_details",
-                )
-                if any(self._has_content(panel.get(field)) for field in fields):
-                    return True
-                for line in panel.get("dialogue", []) or []:
-                    if isinstance(line, dict) and self._has_content(line.get("text")):
-                        return True
-                for sfx in panel.get("sound_effects", []) or []:
-                    if isinstance(sfx, dict) and (
-                        self._has_content(sfx.get("sfx_text"))
-                        or self._has_content(sfx.get("sfx_meaning"))
-                        or self._has_content(sfx.get("sfx_style_note"))
-                    ):
-                        return True
-        return False
-
-    def _has_content(self, value: Any) -> bool:
-        if isinstance(value, str):
-            return bool(value.strip())
-        if isinstance(value, list):
-            return any(self._has_content(item) for item in value)
-        if isinstance(value, dict):
-            if "selected" in value and self._has_content(value.get("selected")):
-                return True
-            return any(self._has_content(v) for k, v in value.items() if k not in {"options"})
-        return value is not None and value is not False
-
-    def _plot_threads_have_content(self, plot_threads: dict[str, Any]) -> bool:
-        if not isinstance(plot_threads, dict):
-            return False
-        main = plot_threads.get("main_plot_thread", {})
-        if isinstance(main, dict) and str(main.get("goal", "")).strip():
-            return True
-        for key in ("character_arc_threads", "relationship_threads", "threat_threads", "power_threads"):
-            items = plot_threads.get(key, [])
-            if not isinstance(items, list):
-                continue
-            for item in items:
-                if isinstance(item, dict) and any(str(v).strip() for v in item.values() if isinstance(v, str)):
-                    return True
-        return False
+    # (content predicates moved to app/services/content_inspector.py)
 
     def list_stories(self, *, user_id: str) -> list[dict[str, Any]]:
         stories = self.registry.list_stories_for_user(user_id)

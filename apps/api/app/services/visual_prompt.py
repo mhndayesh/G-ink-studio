@@ -203,6 +203,21 @@ def negative_prompt(extra: object = "") -> str:
     return f"{NEGATIVE_BASE}, {cleaned}" if cleaned else NEGATIVE_BASE
 
 
+def has_visual_noise(text: object) -> bool:
+    """True if ``text`` carries colour / lighting / render-quality / style noise —
+    i.e. it is *not* already a clean visual-only descriptor list.
+
+    Used to flag source prompts that the export will have to clean.
+    """
+    low = " ".join(str(text or "").split()).lower()
+    if not low:
+        return False
+    if any(b in low for b in _BANNED_SUBSTRINGS):
+        return True
+    words = {w.lower() for w in _WORD_RE.findall(low)}
+    return bool(words & _COLOUR_WORDS) or bool(words & _DROP_IF_CONTAINS_WORD)
+
+
 # --- panel render-mode policy (BUNDLE-AUDIT #3) ----------------------------
 
 # Recognised camera framings (BUNDLE-AUDIT #2), hyphens normalised to spaces.

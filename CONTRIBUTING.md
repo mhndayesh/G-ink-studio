@@ -32,10 +32,11 @@ cd apps/web && npm ci && cp .env.example .env.local && npm run dev
 
 Run what CI runs (see `.github/workflows/ci.yml`):
 
-- Backend: `python apps/api/tests/smoke_test.py` → expect `"passed": true`
-  (start the API first; the smoke test hits a running server). Add `pytest` runs
-  here once unit tests exist.
-- Frontend: `npm run lint` and `npm run build` in `apps/web`; `npm run smoke`.
+- Backend: `cd apps/api && python -m pytest` — runs `tests/unit/*` plus
+  `tests/test_smoke.py` (the end-to-end workflow, in-process via TestClient — no
+  server/Neo4j/Qdrant/LLM needed). `python tests/smoke_test.py` also still works
+  standalone and prints a JSON report (`"passed": true` on success).
+- Frontend: `cd apps/web && npm run lint && npm run build && npm run smoke`.
 
 ## Conventions
 

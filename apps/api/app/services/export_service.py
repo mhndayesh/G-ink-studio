@@ -16,6 +16,7 @@ from app.services.visual_prompt import (
     STYLE_PREFIX,
     canonical_camera_shot,
     compile_visual_prompt,
+    has_visual_noise,
     negative_prompt,
     render_mode_for_cast,
     sanitize_visual_prompt,
@@ -1524,19 +1525,16 @@ def _validate_export(files: dict, all_scripts: list[dict]) -> dict:
     # 7. Visual prompts that carry colour / lighting / style noise (info —
     #    export now auto-cleans these and prepends "black and white Japanese
     #    manga style", but it's worth flagging so the source gets fixed).
-    def _is_dirty(text: object) -> bool:
-        raw = " ".join(str(text or "").split())
-        return bool(raw) and sanitize_visual_prompt(raw) != raw and sanitize_visual_prompt(raw) != ""
     dirty_chars: list[str] = []
     for p in profiles:
         if not isinstance(p, dict):
             continue
         det = _appearance_block(p)
-        if _is_dirty(det.get("ai_image_prompt_notes")):
+        if has_visual_noise(det.get("ai_image_prompt_notes")):
             dirty_chars.append(_safe(p.get("character_name") or p.get("name")))
     dirty_locs: list[str] = []
     for loc in _as_list((po.get("locations") or {}).get("locations", [])):
-        if isinstance(loc, dict) and _is_dirty(loc.get("positive_prompt")):
+        if isinstance(loc, dict) and has_visual_noise(loc.get("positive_prompt")):
             dirty_locs.append(_safe(loc.get("name")))
     if dirty_chars or dirty_locs:
         bits = []

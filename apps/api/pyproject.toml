@@ -1,0 +1,6 @@
+# Minimal config so `pytest` (run from apps/api/) finds the test suite and can
+# import the `app` package. No build backend — this is an app, not a package.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

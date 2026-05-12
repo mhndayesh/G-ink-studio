@@ -23,11 +23,11 @@ jobs:
           cache: pip
           cache-dependency-path: apps/api/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Smoke test
-        # smoke_test.py runs the app in-process via fastapi TestClient against a
-        # temp SQLite registry; no server / Neo4j / Qdrant / LLM needed.
-        run: python tests/smoke_test.py
-      # TODO: add `pytest` here once unit tests exist (see docs/REPO-CRITIQUE.md)
+      - name: Tests (unit + smoke)
+        # pytest runs tests/unit/* plus tests/test_smoke.py, which exercises the
+        # app in-process via fastapi TestClient against a temp SQLite registry —
+        # no server / Neo4j / Qdrant / LLM needed.
+        run: python -m pytest
 
   frontend:
     runs-on: ubuntu-latest

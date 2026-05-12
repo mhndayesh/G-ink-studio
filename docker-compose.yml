@@ -1,55 +1,104 @@
 services:
+
+  # ── Backend API (FastAPI) ─────────────────────────────────────────────────
   api:
     build:
       context: ./apps/api
     ports:
-      - "8000:8000"
+      - "8080:8080"
     environment:
       MANGA_STORAGE_ROOT: /app/storage/stories
       MANGA_REGISTRY_SQLITE_PATH: /app/storage/manga_registry.sqlite
       MANGA_AUTH_ENABLED: "false"
       MANGA_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+
+      # ── LLM (optional) ─────────────────────────────────────────────────
+      # Copy .env.example → .env, fill in your key, then run docker compose up.
+      # Without a key every AI button still works via deterministic fallback.
+      MANGA_LLM_ENABLED: ${MANGA_LLM_ENABLED:-false}
+      MANGA_LLM_PROVIDER: ${MANGA_LLM_PROVIDER:-openai}
+      MANGA_OPENAI_API_KEY: ${MANGA_OPENAI_API_KEY:-}
+      MANGA_OPENAI_MODEL: ${MANGA_OPENAI_MODEL:-gpt-4.1-mini}
+      MANGA_OPENAI_BASE_URL: ${MANGA_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      MANGA_LLM_TIMEOUT_SECONDS: ${MANGA_LLM_TIMEOUT_SECONDS:-60}
+
+      # ── Neo4j graph ─────────────────────────────────────────────────────
       MANGA_NEO4J_ENABLED: "true"
       MANGA_NEO4J_URI: bolt://neo4j:7687
       MANGA_NEO4J_USER: neo4j
       MANGA_NEO4J_PASSWORD: manga_maker_password
+
+      # ── Qdrant vector ───────────────────────────────────────────────────
       MANGA_QDRANT_ENABLED: "true"
       MANGA_QDRANT_URL: http://qdrant:6333
+
     volumes:
       - ./storage:/app/storage
     depends_on:
-      - neo4j
-      - qdrant
+      neo4j:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Frontend (Next.js) ───────────────────────────────────────────────────
   web:
-    image: node:20-alpine
-    working_dir: /app
-    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0"
+    build:
+      context: ./apps/web
+      args:
+        # Browser connects to the API via localhost — keep this as localhost:8080
+        # for local use. Change to your server's hostname/IP if running remotely.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api/v1}
+        NEXT_PUBLIC_MANGA_USER_ID: ${NEXT_PUBLIC_MANGA_USER_ID:-dev_user}
+        NEXT_PUBLIC_MANGA_API_KEY: ${NEXT_PUBLIC_MANGA_API_KEY:-}
     ports:
       - "3000:3000"
-    environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
-      NEXT_PUBLIC_MANGA_USER_ID: dev_user
-    volumes:
-      - ./apps/web:/app
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
+  # ── Neo4j (character relationship graph) ────────────────────────────────
   neo4j:
     image: neo4j:5
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "7474:7474"   # browser UI  → http://localhost:7474
+      - "7687:7687"   # bolt protocol
     environment:
       NEO4J_AUTH: neo4j/manga_maker_password
     volumes:
       - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL",
+             "wget --quiet --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
 
+  # ── Qdrant (vector memory search) ───────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     ports:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL",
+             "wget --quiet --tries=1 --spider http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
 volumes:
   neo4j_data:

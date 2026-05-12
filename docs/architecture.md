@@ -1,207 +1,177 @@
-# System Architecture
+# Manga Maker System — Architecture Overview
 
-## Overview
+## Core Philosophy
 
-Manga Maker System is an AI-assisted manga story engine with event-driven memory management. It combines versioned JSON state, relational databases (PostgreSQL), graph databases (Neo4j), and vector search (Qdrant) to maintain story continuity across chapters and arcs.
+Event-sourced story-state engine. Users write freely, the system detects consequences via LLM (or deterministic fallback), the user approves changes, and the backend creates versioned bundles synced to PostgreSQL + Neo4j (graph) + Qdrant (vector).
 
-## Core Principles
+**Golden rule:** LLM proposes, user confirms. Never edit story JSON files directly — always go through the event/approval flow.
 
-1. **Story-state engine, not CRUD** — The system tracks narrative state transitions through events, not simple create/update/delete operations.
-2. **Versioned snapshots** — Every approved change creates a new synchronized version bundle. Old versions are immutable.
-3. **Event-sourced memory** — All official changes go through an append-only event store. State is reconstructed from events.
-4. **LLM proposes, user confirms** — The LLM never directly edits official files. It generates proposals; the system validates; the user approves.
-5. **Simple frontend, strict backend** — Users interact with guided screens. All business logic and validation lives in the backend.
+---
 
-## High-Level Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                        CLIENT LAYER                          │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐     │
-│  │         Next.js Frontend (Studio Flow)              │     │
-│  │                                                     │     │
-│  │  Seed → World → Cast → Web → Board → Desk → Court   │     │
-│  │       → Script → Timeline → Radar → Control         │     │
-│  └──────────────────┬──────────────────────────────────┘     │
-└─────────────────────┼────────────────────────────────────────┘
-                      │ REST API (/api/v1) — JSON
-                      ▼
-┌──────────────────────────────────────────────────────────────┐
-│                       SERVICE LAYER                          │
-│                                                              │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐   │
-│  │ Story    │ │ Snapshot │ │ Version  │ │ Character    │   │
-│  │ Service  │ │ Service  │ │ Service  │ │ Service      │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────┘   │
-│                                                              │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐   │
-│  │ Plot     │ │ LLM      │ │ Event    │ │ Patch        │   │
-│  │ Workspace│ │ Service  │ │ Service  │ │ Service      │   │
-│  │ Service  │ │          │ │          │ │              │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────┘   │
-│                                                              │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐   │
-│  │ Chapter  │ │ Continuity│ │ Graph    │ │ Vector       │   │
-│  │ Script   │ │ Service  │ │ Service  │ │ Service      │   │
-│  │ Service  │ │          │ │ (Neo4j)  │ │ (Qdrant)     │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────┘   │
-│                                                              │
-│  ┌──────────┐ ┌──────────┐                                  │
-│  │ Validation│ │ Template │                                  │
-│  │ Service  │ │ State Svc│                                  │
-│  └──────────┘ └──────────┘                                  │
-└──────┬─────────┬──────────┬──────────┬─────────────────────┘
-       │         │          │          │
-       ▼         ▼          ▼          ▼
-┌─────────┐ ┌────────┐ ┌────────┐ ┌──────────┐
-│PostgreSQL│ │ Neo4j  │ │ Qdrant │ │ File     │
-│(Registry)│ │ (Graph)│ │ (Vector)│ │ Storage  │
-└─────────┘ └────────┘ └────────┘ └──────────┘
-```
-
-## Data Flow: The Writing Workspace Pipeline
-
-This is the central user workflow that drives the entire system.
+## Data Flow
 
 ```
 User writes free text
-        │
-        ▼
-┌───────────────┐     ┌───────────────┐
-│  Free Writing  │────▶│   AI Expand   │ (optional)
-│  (workspace)   │     │               │
-└───────────────┘     └───────┬───────┘
-                              │ user accepts/rejects
-                              ▼
-                       ┌───────────────┐
-                       │  Analyze      │
-                       │  Consequences │
-                       └───────┬───────┘
-                               │
-                               ▼
-                        ┌───────────────┐
-                        │ Detected      │
-                        │ Events +      │
-                        │ Questions     │
-                        └───────┬───────┘
-                                │ user answers
-                                ▼
-                         ┌───────────────┐
-                         │ Final         │
-                         │ Confirmation  │
-                         └───────┬───────┘
-                                 │ user approves
-                                 ▼
-                    ┌────────────────────────┐
-                    │ Backend creates:       │
-                    │ • story_events (append)│
-                    │ • json_patches         │
-                    │ • v002 snapshot bundle │
-                    │ • Neo4j projections    │
-                    │ • Qdrant vector chunks │
-                    │ • continuity report    │
-                    └────────────────────────┘
+       ↓
+  PlotWorkspaceService.save_free_writing()
+       ↓
+  PlotWorkspaceService.ai_complete()     ← LLM or fallback
+       ↓
+  PlotWorkspaceService.analyze()         ← LLM extracts consequences + questions
+       ↓
+  User answers questions (Consequence Court)
+       ↓
+  PlotWorkspaceService.approve()
+       ↓
+  EventPatchService.create_from_approved_workspace()   ← creates official events + patches
+       ↓
+  VersionService.create_candidate_from_approved_events()  ← creates v002 bundle
+       ↓
+  VersionService.mark_official()         ← auto-syncs Graph + Vector + Continuity
 ```
 
-## File System Layout
+---
 
-### Official Story Files (versioned)
+## Six Official Story Files
 
-Each version creates a synchronized bundle of these files:
-
-| File | Storage | Description |
+| File | Service | Mutated via |
 |------|---------|-------------|
-| `master_story.json` | File storage + JSONB in SQL | World foundation, rules, factions, threats |
-| `characters.json` | File storage + JSONB in SQL | Character bible, relationship map |
-| `plot_outline.json` | File storage + JSONB in SQL | Official plot plan (arcs, chapters, scenes) |
-| `memory_system.json` | File storage only | Persistence rules, event definitions, sync config |
+| `master_story.json` | MasterStoryService | Approved events (patch template) |
+| `characters.json` | CharacterService | Approved events (profiles, relationships) |
+| `plot_outline.json` | PlotOutlineService | Approved events (chapters, scenes, arcs) |
+| `memory_system.json` | TemplateStateService | **Frozen** per version — never edited |
+| `plot_workspace.json` | PlotWorkspaceService | Ephemeral (free writing, AI, analysis) |
+| `chapter_script.json` | ChapterScriptService | Approved events (pages, panels) |
 
-### Working Files (ephemeral)
+All files maintain `story_id`, `version_id`, `file_type`, `state_type` invariants.
 
-| File | Storage | Description |
-|------|---------|-------------|
-| `plot_workspace.json` | File storage + path in SQL | Temporary free writing, AI expansion, detected events |
-| `chapter_script.json` | File storage + path in SQL | Clean manga script output (scenes → pages → panels) |
+---
 
-### Version Bundles
+## 12 Backend Services
 
-```
-/stories/{story_id}/versions/v001/
-  ├── master_story.json
-  ├── characters.json
-  ├── plot_outline.json
-  ├── memory_system.json
-  └── version_manifest.json
+| Service | Responsibility |
+|---------|----------------|
+| `StoryService` | CRUD stories, list, status, current files, version manifests |
+| `MasterStoryService` | Read/patch/validate master_story.json (genre, factions, threats) |
+| `CharacterService` | Structure, major profiles, side profiles, relationship map |
+| `PlotOutlineService` | Narrative structure, arc overview, chapters, scenes |
+| `PlotWorkspaceService` | Free writing, AI completion, analysis, questions, approve |
+| `EventPatchService` | Create official events + JSON patches from approved workspace |
+| `VersionService` | Create candidate versions, mark official, sync graph/vector/continuity |
+| `ChapterScriptService` | Generate, patch, extract events, approve chapter scripts |
+| `ContinuityService` | Check continuity, run reports, version checks |
+| `GraphService` | Project events to Neo4j (or local fallback), list projections, web graph |
+| `VectorService` | Upsert memory chunks to Qdrant (or local fallback), list chunks |
+| `LLMService` | AI completion, consequence extraction, field generation |
+| `ValidationService` | Validate all 6 file types by schema rules |
+| `SnapshotService` | Create v001 bundles from templates, file I/O |
 
-/stories/{story_id}/versions/v002/
-  ├── master_story.json    (patched)
-  ├── characters.json      (patched)
-  ├── plot_outline.json
-  ├── memory_system.json   (updated events)
-  └── version_manifest.json
-```
+---
 
-## Technology Stack
-
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Frontend** | Next.js App Router, React, TypeScript | Dynamic Studio Flow UI |
-| **Styling** | Tailwind CSS + shadcn/ui | Utility-first component library |
-| **State** | TanStack Query (server) + Zustand (local) | Data fetching and local UI state |
-| **Backend** | FastAPI (Python 3.12+) | REST API, Pydantic validation |
-| **Relational DB** | PostgreSQL 16 | Story registry, events, patches, workspaces |
-| **Graph DB** | Neo4j 5 | Character/faction/location relationships |
-| **Vector DB** | Qdrant | Semantic story memory (lore, summaries) |
-| **Cache/Queue** | Redis | Background workers, caching |
-| **Storage** | Local filesystem / S3-compatible | JSON snapshot bundles |
-| **Migrations** | Alembic | PostgreSQL schema migrations |
-
-## Versioning Model
+## Version Lifecycle
 
 ```
-v001 (template_state) ──▶ user fills setup ──▶ v002 (story_state)
-                                                    │
-                                              writes + approves
-                                                    ▼
-                                               v003, v004, ...
+v001 (template_state) ──approve──► events + patches ──create-candidate──► v002 (candidate)
+       │                                                                       │
+       └── never edited, always readable                                       │
+                                                                               ▼
+                                                                     mark-official ──► v002 (official)
+                                                                                          │
+                                                                                    graph_sync
+                                                                                    vector_sync
+                                                                                    continuity_sync
 ```
 
-- **template_state**: Initial state. Files contain empty/default values. Edits are direct patches without events.
-- **story_state**: User has filled meaningful content. All changes require approved events.
-- Versions are synchronized bundles — if one file changes, all official files are written to the new version folder.
+---
 
-## Event Categories
+## State Types
 
-| Category | Example Events |
-|----------|---------------|
-| `character_events` | CHARACTER_CREATED, CHARACTER_INJURED, CHARACTER_DIED, CHARACTER_ALLEGIANCE_CHANGED |
-| `relationship_events` | RELATIONSHIP_CREATED, RELATIONSHIP_TRUST_CHANGED, RELATIONSHIP_BETRAYAL |
-| `power_events` | POWER_GAINED, POWER_LOST, POWER_EVOLVED |
-| `world_events` | WORLD_RULE_CHANGED, LOCATION_DESTROYED, STORY_FOUNDATION_SHIFTED |
-| `faction_events` | FACTION_JOINED, FACTION_LEFT, FACTION_ALLIED, FACTION_AT_WAR |
-| `threat_events` | THREAT_REVEALED, THREAT_DEFATED, THREAT_ESCALATED |
-| `plot_events` | CHAPTER_COMPLETED, PLOT_CHANGES_CONFIRMED, ARC_FINISHED |
-| `system_events` | VERSION_CREATED, WORKSPACE_APPROVED |
+- `template_state` — editable, working copy (current version)
+- `story_state` — frozen, official version (read-only)
+- `candidate` — pending version awaiting official mark
 
-## Continuity Checking
+---
 
-The continuity service runs after every approval and checks for:
+## API Conventions
 
-- Dead character appearing alive without flashback or revive event
-- Destroyed location used as normal active location
-- Lost power used without power recovery event
-- Relationship state contradicting relationship map
-- Faction behavior contradicting faction goals
-- World rule violation without WORLD_RULE_CHANGED event
-- Master story changed without an event
-- Future version memory leaking into previous versions
-- Mixed version files used together
-- Graph projection missing after approved event
-- Vector memory missing after major scene
+- Base path: `/api/v1/`
+- Unified response: `{ "ok": true, "data": {}, "error": null }`
+- Error shape: `{ "ok": false, "data": null, "error": { "code": "...", "message": "...", "details": {} } }`
+- Error handler: `MangaMakerError` → `manga_error_handler` in `app/core/errors.py`
+- Routers mounted in `app/main.py`
+- Auth: `X-Manga-User-Id` header (dev mode) or `Authorization: Bearer <key>` (api-key mode)
+- Story ownership enforced on all `{story_id}` routes via `require_story_access`
 
-## Security Model
+---
 
-- **Dev mode**: `MANGA_AUTH_ENABLED=false` — permissive, uses `dev_user`
-- **API key mode**: `MANGA_AUTH_ENABLED=true` — requires `X-Manga-API-Key` header
-- Story ownership: Each story has a `user_id`. All `/stories/{id}/...` routes verify ownership.
+## Frontend Architecture
+
+```
+Next.js App Router
+  └─ /studio/[storyId]/layout.tsx → StudioShell (nav + status pills)
+       ├── home       → stage-grouped dashboard
+       ├── seed       → story seed (genre, ending, idea)
+       ├── world      → world core (factions, threats, rules)
+       ├── cast       → major character profiles
+       ├── side       → side character profiles
+       ├── web        → relationship graph (force-directed)
+       ├── board      → plot board (arc, chapters, structure)
+       ├── scenes     → scene cards
+       ├── threads    → plot threads (character arcs, threats, powers)
+       ├── desk       → writing desk (free writing, AI)
+       ├── court      → consequence court (questions, approve)
+       ├── script     → manga script studio
+       ├── timeline   → memory timeline (versions)
+       ├── radar      → continuity radar
+       └── control    → control room (raw API access)
+```
+
+15 screens grouped into 6 stages: **Foundation**, **Characters**, **Plot**, **Write**, **Produce**, **Review**.
+
+---
+
+## AI Integration
+
+The system has two AI pathways:
+
+1. **PlotWorkspace AI** — free writing expansion + consequence detection via `LLMService`
+2. **Field-Level AI** — inline generation for any form field via `POST /ai/generate`
+
+Both support:
+- Real LLM provider (OpenAI-compatible API)
+- Deterministic fallback (no API key needed)
+- User constraints (intent notes, protected sections)
+
+---
+
+## Safe Fallback Mode
+
+Backend runs without Neo4j, Qdrant, or LLM. Disable individually via `.env`:
+
+| Env Var | Default | Effect when false |
+|---------|---------|-------------------|
+| `MANGA_GRAPH_ENABLED` | true (docker) | Uses local fallback logs |
+| `MANGA_VECTOR_ENABLED` | true (docker) | Skips Qdrant storage |
+| `MANGA_LLM_ENABLED` | false | Deterministic fallback |
+
+---
+
+## Key File Locations
+
+| Concern | Path |
+|---------|------|
+| FastAPI entrypoint | `apps/api/app/main.py` |
+| Dependency injection | `apps/api/app/main_dependencies.py` |
+| Pydantic models | `apps/api/app/models/` |
+| Business logic (15 services) | `apps/api/app/services/` |
+| REST endpoints (16 routers) | `apps/api/app/api/v1/` |
+| DB connections | `apps/api/app/db/postgres.py` |
+| Auth logic | `apps/api/app/core/auth.py` |
+| SQL migrations | `apps/api/migrations/versions/` |
+| DB schema | `apps/api/infra/postgres/schema.sql` |
+| Story templates | `apps/api/app/templates/` |
+| Frontend routes | `apps/web/app/studio/[storyId]/` |
+| Frontend components | `apps/web/components/` |
+| Frontend API client | `apps/web/lib/api.ts` |
+| Frontend phases config | `apps/web/lib/phases.ts` |
+| Frontend store | `apps/web/lib/store.ts` |

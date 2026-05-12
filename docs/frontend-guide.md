@@ -1,321 +1,165 @@
-# Frontend Guide
-
-## Overview
-
-The frontend is a Next.js App Router application built around the **Manga Studio Flow** — a guided, phase-based UX that maps directly to backend story-state operations. Users interact with screens, not raw JSON.
+# Frontend Screens + Route Map
 
 ## Tech Stack
 
-| Technology | Purpose |
-|-----------|---------|
-| Next.js App Router | File-based routing, Server Components |
-| React 18+ | UI library |
-| TypeScript | Type safety across the app |
-| Tailwind CSS | Utility-first styling |
-| shadcn/ui | Accessible component primitives |
-| TanStack Query | Backend data fetching and caching |
-| Zustand | Local UI state (sidebar, modals, drafts) |
-| React Hook Form + Zod | Form validation |
-| React Flow | Relationship graph visualization (planned) |
-| Monaco Editor | Raw JSON debug view (advanced mode) |
-
-## Route Structure
-
-```
-app/
-├── studio/
-│   ├── page.tsx                    # Studio landing — pick or create story
-│   └── [storyId]/
-│       ├── layout.tsx              # Studio shell: phase rail + bottom dock
-│       │
-│       ├── home/page.tsx           # Dashboard — project status cards
-│       ├── seed/page.tsx           # Story Seed — title, idea, genre, ending
-│       ├── world/page.tsx          # World Core — rules, factions, threats
-│       ├── cast/page.tsx           # Cast Forge — character profiles
-│       ├── web/page.tsx            # Relationship Web — relationship map
-│       ├── board/page.tsx          # Plot Board — arcs, chapters, scenes
-│       ├── desk/page.tsx           # Writing Desk — free writing + AI
-│       ├── court/page.tsx          # Consequence Court — answer questions
-│       ├── script/page.tsx         # Manga Script Studio — panels/pages
-│       ├── timeline/page.tsx       # Memory Timeline — version history
-│       ├── radar/page.tsx          # Continuity Radar — contradictions
-│       └── control/page.tsx        # Control Room — developer JSON view
-```
-
-## Screen Reference
-
-### 1. Studio Home (`/studio`)
-
-**Purpose:** Landing page to create a new story or continue an existing one.
-
-**Backend calls:**
-- `GET /stories` (list user's stories)
-- `POST /stories` (create new story)
+- Next.js 15 (App Router)
+- React 19
+- TypeScript
+- Tailwind CSS + `cn()` utility (`clsx` + `tailwind-merge`)
+- TanStack React Query
+- Zustand (studio store)
+- Framer Motion (animations)
+- Lucide React (icons)
+- react-force-graph-2d (relationship graph)
 
 ---
 
-### 2. Dashboard — Home (`/[storyId]/home`)
+## 15 Studio Screens
 
-**Purpose:** Show project status at a glance, not editing.
+All routes live under `/studio/[storyId]/`.
 
-**Displays:**
-- Story Setup: incomplete / complete
-- Characters: incomplete / complete
-- Relationship Map: locked / ready / complete
-- Plot Outline: not started / active
-- Current Workspace: free writing / analysis ready
-- Chapter Script: draft / approved
-- Current Version + Continuity status
+### Foundation Stage (4 screens)
 
-**Backend calls:**
-- `GET /stories/{id}/status`
-- `GET /stories/{id}/current-version`
-- `GET /stories/{id}/files/current`
+| Screen | Route | File Key | Description |
+|--------|-------|----------|-------------|
+| **Studio Home** | `/home` | `status` | Stage-grouped dashboard with all 15 phases, backend status, files |
+| **Story Seed** | `/seed` | `master_story.json` | Title, idea, genre (multi-select), ending direction, story foundation |
+| **World Core** | `/world` | `master_story.json` | World type, world rules (multi-select + custom), 10 rule detail fields, major factions (per-faction expandos), major+minor threats, 6 threat detail fields |
 
----
+### Characters Stage (3 screens)
 
-### 3. Story Seed (`/[storyId]/seed`)
+| Screen | Route | File Key | Description |
+|--------|-------|----------|-------------|
+| **Cast Forge** | `/cast` | `characters.json` | Main character structure (option selector), profile queue, major profile creation via `ProfileTabs` (7 tabs, 150+ fields), AI Fill panel, relationship map activation |
+| **Side Cast** | `/side` | `characters.json` | List existing side characters, create/edit with `ProfileTabs`, auto-generated `side_XXX` IDs |
+| **Relationship Web** | `/web` | `characters.json` | **Locked** until 2+ major profiles exist. Force-directed graph via `react-force-graph-2d`. Click-to-select node details. Edge colors by relationship type. |
 
-**Purpose:** Fill in `master_story.json` foundation — step by step, not all at once.
+### Plot Stage (3 screens)
 
-**Steps:**
-1. Title + Basic Idea
-2. Story Type / Genre (multi-select chips)
-3. Ending Direction (single-select cards)
-4. Story Foundation
-5. World Type
-6. World Master Rules (checkboxes + detail textareas)
-7. Factions / Ruling Sides
-8. Major + Minor Threats
+| Screen | Route | File Key | Description |
+|--------|-------|----------|-------------|
+| **Plot Board** | `/board` | `plot_outline.json` | Narrative structure selector (Kishotenketsu/Three-Act/Hero's Journey/Custom), arc overview fields, structure editors (detailed sections per act), AI Fill panel, chapter creation modal with cross-reference selectors |
+| **Scene Cards** | `/scenes` | `plot_outline.json` | Scene cards grouped by chapter. Each scene: location, time, characters (multi-select), goal, conflict, relationship dynamic, visual moment, panel mood, ending beat. Modal create/edit. |
+| **Plot Threads** | `/threads` | `plot_outline.json` | 5-tab interface: Main Thread, Character Arcs, Relationships, Threats, Powers. Dynamic add/remove lists with detail fields per item. |
 
-**Backend calls:**
-- `GET /stories/{id}/master-story`
-- `PATCH /stories/{id}/master-story/template`
-- `POST /stories/{id}/master-story/validate`
+### Write Stage (2 screens)
 
----
+| Screen | Route | File Key | Description |
+|--------|-------|----------|-------------|
+| **Writing Desk** | `/desk` | `plot_workspace.json` | Free writing textarea with: input type selector (7 options), AI expansion priority (5 modes), intent notes, protected sections list. AI expand with accept/discard. Consequence detect button. Shows AI preview + questions. |
+| **Consequence Court** | `/court` | `plot_workspace.json` | Consequence questions from analysis, Yes/No/Custom answer buttons per question. AI suggest-answers. Final approve button → creates v002 bundle (events + patches + version + sync). |
 
-### 4. World Core (`/[storyId]/world`)
+### Produce Stage (1 screen)
 
-**Purpose:** Define world scale, rules, factions, and threats.
+| Screen | Route | File Key | Description |
+|--------|-------|----------|-------------|
+| **Manga Script** | `/script` | `chapter_script.json` | Chapter metadata, pages/panels with edit mode toggle. Panel: size selector (7 options), camera shot (13 options), pacing, visual description, character action, dialogue lines (speaker + text), SFX. Inline editing. |
 
-**Components:**
-- World Scale Selector (micro → epic)
-- World Rule Grid (checkboxes: Magic, Superpowers, Demons, etc.)
-- Rule Detail Drawer (expandable textareas per rule)
-- Faction Board (add/edit factions with goals)
-- Threat Builder (major + minor threats)
+### Review Stage (3 screens)
 
-**Backend calls:** Same as Story Seed — all update `master_story.json` via template patches.
+| Screen | Route | File Key | Description |
+|--------|-------|----------|-------------|
+| **Memory Timeline** | `/timeline` | `versions` | Versioned story history — version cards with ID and status |
+| **Continuity Radar** | `/radar` | `continuity` | Run current continuity check, view reports. 6 placeholder cards: Character State, Relationship Logic, World Rules, Power Rules, Version Sync, File Links. |
+| **Control Room** | `/control` | `advanced` | Three JSON panels: Auth (me), Story Status, Current Files |
 
 ---
 
-### 5. Cast Forge (`/[storyId]/cast`)
+## Stage Grouping (lib/phases.ts)
 
-**Purpose:** Create character profiles from `characters.json`.
-
-**Layout:** Three-panel split
-- Left: Character structure selector + profile queue
-- Center: Current character form (tabs)
-- Right: Preview card
-
-**Character tabs:** Identity, Appearance, Faction Alignment, Backstory, Mental State, Community Place, Personality, Powers, Arc & Threat Connection
-
-**Unlock rule:** Relationship map stays locked until `created_major_character_profiles.length >= 2`.
-
-**Backend calls:**
-- `GET /stories/{id}/characters`
-- `PATCH /stories/{id}/characters/structure`
-- `POST /stories/{id}/characters/profiles`
-- `PATCH /stories/{id}/characters/profiles/{charId}`
-
----
-
-### 6. Relationship Web (`/[storyId]/web`)
-
-**Purpose:** Manage character relationships from `characters.json`.
-
-**Locked state:** Shows locked message with reason: "Create at least 2 major characters first."
-
-**Two views (when unlocked):**
-- Table view: Character A | Type | Character B | Trust | Conflict | Change Arc
-- Graph view: Nodes = characters, Edges = relationship type + color
-
-**Backend calls:**
-- `POST /stories/{id}/characters/relationship-map/activate`
-- `POST /stories/{id}/characters/relationships`
-
----
-
-### 7. Plot Board (`/[storyId]/board`)
-
-**Purpose:** Official plot planning from `plot_outline.json`. NOT free writing.
-
-**Sections:**
-- Story Start Workflow (Plan First Arc Then Chapter, etc.)
-- Narrative Structure Selector (Kishotenketsu / Three-Act / Shonen / War)
-- Arc Overview
-- Kishotenketsu Outline (Ki/Sho/Ten/Ketsu form — shown only when selected)
-- Conflict-Driven Outline (shown for Hybrid mode)
-- Chapter List (cards with drag reorder)
-- Scene Cards
-- Plot Threads
-
-**Backend calls:**
-- `GET /stories/{id}/plot-outline`
-- `PATCH /stories/{id}/plot-outline/narrative-structure`
-- `POST /stories/{id}/plot-outline/chapters`
-- `POST /stories/{id}/plot-outline/scenes`
-
----
-
-### 8. Writing Desk (`/[storyId]/desk`) — **Most Important Screen**
-
-**Purpose:** Free writing workspace from `plot_workspace.json`. The heart of the product.
-
-**Layout:**
-```
-┌─────────────────────────────────────────────────────┐
-│ Topbar: Story | Version | State | Continuity        │
-├──────────┬────────────────────┬─────────────────────┤
-│ Left     │ Center             │ Right               │
-│ Context  │ Free writing       │ AI/analysis panel   │
-│ - Arc    │ [large textarea]   │ Detected changes    │
-│ - Chapter│                    │ Questions           │
-│ - Chars  │                     │ Warnings            │
-│ - Threats│                    │                     │
-├──────────┴────────────────────┴─────────────────────┤
-│ Bottom: Final confirmation panel (after approval)   │
-└─────────────────────────────────────────────────────┘
+```typescript
+stage: "foundation"  → home, seed, world
+stage: "characters"  → cast, side, web
+stage: "plot"        → board, scenes, threads
+stage: "write"       → desk, court
+stage: "produce"     → script
+stage: "review"      → timeline, radar, control
 ```
 
-**Controls:**
-- [ ] AI Completion / Expand Writing toggle
-- Expansion mode selector: Light / Medium / Heavy / Add Manga Visual Detail / Add Dialogue
-- [Expand] button
-- [Analyze Consequences] button (mandatory)
-
-**Workflow on screen:**
-1. User writes → 2. Optional AI expands → 3. Accept/Reject → 4. Analyze → 5. Detected events appear → 6. Questions shown → 7. Final confirmation panel appears → 8. Approve/Reject
-
-**Backend calls:**
-- `POST /stories/{id}/plot-workspace`
-- `PATCH /.../free-writing`
-- `POST /.../ai-complete`
-- `POST /.../analyze`
-- `GET /.../questions`
-- `POST /.../questions/{id}/answer`
-- `GET /.../confirmation`
-- `POST /.../approve`
+Navigation bar in `StudioShell` shows colored stage labels:
+- Foundation → slate
+- Characters → indigo
+- Plot → emerald
+- Write → amber
+- Produce → rose
+- Review → cyan
 
 ---
 
-### 9. Consequence Court (`/[storyId]/court`)
+## Key Components
 
-**Purpose:** Review and approve detected changes before they become official.
-
-**Four sections:**
-1. Detected Changes (plain English summary)
-2. User Decisions (answers to questions)
-3. Proposed Official Events (with event types)
-4. Proposed JSON Patches (collapsible — raw view behind "Advanced" dropdown)
-
-**Buttons:** Approve All / Reject All / Edit Specific Change / Go Back To Questions
-
-**Backend calls:**
-- `GET /.../confirmation`
-- `POST /.../approve`
-- `POST /.../reject`
-
----
-
-### 10. Manga Script Studio (`/[storyId]/script`)
-
-**Purpose:** Clean manga script from `chapter_script.json`.
-
-**Layout:**
-- Left: Scene list (tree view)
-- Center: Page/panel editor
-- Right: Context and continuity notes
-
-**Script hierarchy:** Chapter → Scenes → Pages → Panels
-
-**Panel fields:** Panel size, Camera shot, Visual, Character action, Background details, Facial expression, Pose/body language, Dialogue, Narration, SFX, Mood, Pacing, Continuity notes
-
-**Backend calls:**
-- `POST /stories/{id}/chapters/{id}/script/generate`
-- `PATCH /.../script` (targeted panel patch)
-- `POST /.../script/extract-events`
-- `POST /.../script/approve`
+| Component | Path | Description |
+|-----------|------|-------------|
+| `StudioShell` | `components/studio/StudioShell.tsx` | Main layout shell with stage-grouped nav, status pills (version, template, sync, LLM) |
+| `NextStep` | `components/studio/NextStep.tsx` | Prev/next phase navigation footer with stage dot indicators |
+| `QueryProvider` | `components/studio/QueryProvider.tsx` | TanStack Query provider wrapped around studio routes |
+| `Panel` | `components/cards/Panel.tsx` | Section panel container with title/subtitle |
+| `JsonPreview` | `components/cards/JsonPreview.tsx` | Dark-mode JSON viewer |
+| `Field` | `components/forms/Field.tsx` | Reusable form input/textarea with label |
+| `OptionGrid` | `components/forms/OptionGrid.tsx` | Selectable option button grid (single/multi) |
+| `CustomInput` | `components/forms/CustomInput.tsx` | Custom option text input with amber styling |
+| `AiButton` | `components/forms/AiButton.tsx` | Sparkle button for AI actions |
+| `AiFillPanel` | `components/forms/AiFillPanel.tsx` | Collapsible AI field panel with multi-select, generate, clear |
+| `ProfileTabs` | `components/forms/ProfileTabs.tsx` | 7-tab character profile editor with 150+ fields |
+| `RelationshipGraph` | `components/graph/RelationshipGraph.tsx` | D3 force-directed graph, color-coded nodes/edges |
 
 ---
 
-### 11. Memory Timeline (`/[storyId]/timeline`)
+## API Client (lib/api.ts)
 
-**Purpose:** Trust and transparency — show version history.
+39 methods mapping 1:1 to backend routes. Base URL from `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000/api/v1`).
 
-**Each version card shows:** Version ID, Created from events, Files included, Continuity status, View snapshots button, Compare to previous button.
+Key methods:
+```typescript
+api.getCharacters(storyId)
+api.createCharacterProfile(storyId, body)
+api.createSideCharacterProfile(storyId, body)
+api.getPlotOutline(storyId)
+api.getWorkspace(storyId)
+api.saveFreeWriting(storyId, body)
+api.analyzeWorkspace(storyId)
+api.approveWorkspace(storyId)
+api.aiGenerate(storyId, body)
+api.getReferences(storyId)
+```
 
-**Backend calls:**
-- `GET /stories/{id}/versions`
-- `GET /stories/{id}/versions/{vid}`
-- `GET /stories/{id}/versions/{vid}/manifest`
-
----
-
-### 12. Continuity Radar (`/[storyId]/radar`)
-
-**Purpose:** Show and resolve story contradictions.
-
-**Severity levels:**
-- High: Dead character appears alive in Chapter 4
-- Medium: City A destroyed but listed as active location
-- Low: Relationship tension changed but relationship map not updated
-
-**Actions per issue:** Fix with AI / Mark as intentional / Create event to explain / Ignore for now
-
-**Backend calls:**
-- `POST /stories/{id}/continuity/check-workspace`
-- `GET /stories/{id}/continuity/reports`
+All methods wrapped with `apiFetch<T>()` — handles envelope unwrapping, error extraction, debug logging.
 
 ---
-
-### 13. Control Room (`/[storyId]/control`) — Advanced Mode Only
-
-**Purpose:** Developer/debug view of raw JSON files.
-
-**Tabs:** master_story.json, characters.json, plot_outline.json, memory_system.json, plot_workspace.json, chapter_script.json
-
-Uses Monaco Editor for syntax-highlighted JSON viewing/editing. Read-only by default; edit requires advanced unlock. Never edits frozen versions.
-
-## Unlock Rules (Phase Gating)
-
-| Screen | Unlocks When |
-|--------|-------------|
-| Story Seed | Always |
-| World Core | After title + basic idea exist |
-| Cast Forge | After master story minimum setup |
-| Relationship Web | After 2 real major character profiles created |
-| Plot Board | After minimum character phase complete |
-| Writing Desk | After plot outline has target arc/chapter |
-| Consequence Court | After detected events/questions exist |
-| Manga Script Studio | After scene cards or approved workspace |
-| Memory Timeline | Always visible after story creation |
-| Continuity Radar | Always visible after story creation |
-| Control Room | Advanced mode only |
 
 ## State Management
 
-| Library | Used For | Not Used For |
-|---------|----------|-------------|
-| TanStack Query | Backend data: story status, JSON files, workspace, questions, confirmation, versions, continuity reports | — |
-| Zustand | Local UI state: sidebar open/close, active tab, draft unsaved state, modal state, selected graph node | Official story state (lives in backend) |
+- **Zustand store** (`lib/store.ts`): `activePhase`, `advancedOpen`
+- **React Query**: Server state per endpoint, stale time 20s
+- **Local state**: Per-page `useState` for form fields, toggles, modals
 
-## API Configuration
+---
+
+## Type Definitions (lib/types.ts)
 
 ```typescript
-// .env.local
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
-NEXT_PUBLIC_MANGA_USER_ID=dev_user
-NEXT_PUBLIC_MANGA_API_KEY=
+ApiEnvelope<T> → { ok: boolean; data: T | null; error: {...} }
+Phase → { key, title, href, file, description }
+StoryStatus, StoryCreateResponse, MasterStoryFile, etc.
 ```
+
+---
+
+## Phase Gating Rules
+
+- **Relationship Web** (`/web`): Locked until 2+ `created_major_character_profiles` exist (enforced by `_validate_characters`)
+- Side characters do NOT count toward the unlock threshold
+- Graph web endpoint returns both major and side characters as nodes
+
+---
+
+## Running
+
+```bash
+cd apps/web
+npm install
+copy .env.example .env.local
+npm run dev
+```
+
+Open http://localhost:3000

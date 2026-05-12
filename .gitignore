@@ -1,7 +1,6 @@
-# Story templates are canonical at integrated/.../apps/api/app/templates/.
-# Per-story user data lives under integrated/.../apps/api/storage/stories/
-# and the SQLite registry sits next to it. Both are local working state, not
-# source — ignore them everywhere.
+# Six official story templates are canonical at apps/api/app/templates/.
+# Per-story user data lives under apps/api/storage/stories/ and the SQLite
+# registry sits next to it. Both are local working state, not source.
 storage/stories/
 storage/*.sqlite
 storage/*.sqlite-journal
@@ -13,14 +12,16 @@ storage/*.sqlite-journal
 # === LOCAL TOOL STATE / SCRATCH FILES ===
 .claude/settings.local.json
 .playwright-mcp/
-/NUL
+NUL
 /export
 /export(*)
+.agents/
+.n8nac/
 
 # === BACKUP / ARCHIVE ZIPs (leave as-is, do not extract into git) ===
 *.zip
 
-# === TEST REPORTS ===
+# === TEST REPORTS / SCRATCH OUTPUT ===
 *_test_report.json
 frontend_smoke_output.txt
 integration_report.json
@@ -40,7 +41,7 @@ node_modules/
 out/
 dist/
 build/
-package-lock.json
+# NOTE: package-lock.json IS committed (reproducible installs). Do not ignore it.
 yarn.lock
 pnpm-lock.yaml
 
@@ -53,6 +54,7 @@ venv/
 env/
 *.pyc
 *.tsbuildinfo
+.pytest_cache/
 
 # === ENVIRONMENT / SECRETS ===
 .env

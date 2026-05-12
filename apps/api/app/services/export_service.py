@@ -568,6 +568,16 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
                 scene_loc_id[sid] = _safe(s.get("location_id"))
             if s.get("location"):
                 scene_loc_name[sid] = _safe(s.get("location"))
+        # All known location names for this chapter — used to repair a page header
+        # whose stored Location doesn't match what the panels actually depict
+        # (BUNDLE-AUDIT #1). Names shorter than 4 chars are skipped (false-match risk).
+        known_loc_names = {
+            n for n in (
+                [_safe(v.get("name")) for v in loc_by_id.values()]
+                + list(scene_loc_name.values())
+                + [_safe(l.get("name")) for l in _as_list((po.get("locations") or {}).get("locations", []))]
+            ) if len(n) >= 4
+        }
         for page in _as_list(cs.get("pages")):
             if not isinstance(page, dict):
                 continue
@@ -589,6 +599,20 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
                     loc_name = _safe(loc_by_id[scene_lid].get("name"))
             if not loc_name:
                 loc_name = scene_loc_name.get(scene_id, "")
+
+            # BUNDLE-AUDIT #1: if the stored Location isn't mentioned anywhere in
+            # this page's panels but exactly one *other* known location is, the
+            # upstream scene→location map is wrong — prefer what the panels show.
+            page_text = " ".join(
+                f"{_safe(pn.get('visual'))} {_safe(pn.get('background_details'))} {_safe(pn.get('character_action'))}"
+                for pn in _as_list(page.get("panels")) if isinstance(pn, dict)
+            ).lower()
+            if page_text:
+                in_panels = [n for n in known_loc_names if n.lower() in page_text]
+                if loc_name and loc_name.lower() not in page_text and len(in_panels) == 1 and in_panels[0] != loc_name:
+                    loc_name = f"{in_panels[0]} (corrected from {loc_name!r} — panels depict this setting)"
+                elif not loc_name and len(in_panels) == 1:
+                    loc_name = in_panels[0]
 
             header = f"\n  Page {page_num}"
             if scene_label:
@@ -1436,6 +1460,46 @@ def _validate_export(files: dict, all_scripts: list[dict]) -> dict:
                 "Run 'Generate All' in Visuals Studio so each panel resolves to a named location."
             ),
             "where": "Studio → Visuals Studio",
+        })
+
+    # 5b. Pages whose declared Location isn't mentioned in any of their panels
+    #     (BUNDLE-AUDIT #1 — the scene→location map looks scrambled). The export
+    #     repairs the header when it can; this flags it so the source gets fixed.
+    loc_by_id = _build_loc_by_id(po)
+    all_loc_names = {
+        _safe(l.get("name")) for l in _as_list((po.get("locations") or {}).get("locations", []))
+    } | {_safe(v.get("name")) for v in loc_by_id.values()}
+    all_loc_names = {n for n in all_loc_names if len(n) >= 4}
+    mismatched: list[str] = []
+    for cs in all_scripts:
+        ch_num = _safe((cs.get("chapter_metadata") or {}).get("chapter_number") or (cs.get("chapter_metadata") or {}).get("chapter_id"))
+        scene_loc_name = {
+            _safe(s.get("scene_id")): _safe(s.get("location"))
+            for s in _as_list(cs.get("chapter_scene_breakdown")) if isinstance(s, dict) and s.get("location")
+        }
+        for page in _as_list(cs.get("pages")):
+            if not isinstance(page, dict):
+                continue
+            lid = _safe(page.get("location_id"))
+            name = _safe(loc_by_id.get(lid, {}).get("name")) if lid in loc_by_id else scene_loc_name.get(_safe(page.get("scene_id")), "")
+            if len(name) < 4:
+                continue
+            ptext = " ".join(
+                f"{_safe(pn.get('visual'))} {_safe(pn.get('background_details'))} {_safe(pn.get('character_action'))}"
+                for pn in _as_list(page.get("panels")) if isinstance(pn, dict)
+            ).lower()
+            if ptext and name.lower() not in ptext and any(n.lower() in ptext for n in all_loc_names if n != name):
+                mismatched.append(f"Ch{ch_num} p{_safe(page.get('page_number'))} (says {name!r})")
+    if mismatched:
+        warnings.append({
+            "level": "high",
+            "category": "location_mismatch",
+            "message": (
+                "Page Location(s) don't match the panel content — the scene→location map looks scrambled: "
+                + "; ".join(mismatched[:8]) + (f" (+{len(mismatched) - 8} more)" if len(mismatched) > 8 else "")
+                + ". The export auto-corrects the header where it can; fix the scene→location assignment at the source so Purpose / Location / panel visuals agree."
+            ),
+            "where": "Studio → Plot Board (scene cards) / Visuals Studio",
         })
 
     # 6. Character names not lowercased in source data (info — export auto-lowers)

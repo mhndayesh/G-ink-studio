@@ -27,9 +27,10 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
     `apps/api/app/services/export_service.py` (the ~45 rendering helpers).
   - Shared "is this chapter/scene/page non-empty?" predicates (duplicated in
     `StoryService` and `ChapterScriptService`) → `apps/api/app/services/content_inspector.py`.
-  - `llm_service.py` (1894→1690): stable-relationship-ID helpers + `backfill_thread_ids`
+  - `llm_service.py` (1894→1529): stable-relationship-ID helpers + `backfill_thread_ids`
     → `apps/api/app/services/thread_ids.py`; the static field-schema hint
-    → `apps/api/app/services/llm_prompts.py`.
+    → `apps/api/app/services/llm_prompts.py`; the context trimmer (`_clip_text`,
+    `_compact_generation_context`) → `apps/api/app/services/llm_context.py`.
   - `chapter_script_service.py` (1783→1623): the patch-by-path engine →
     `apps/api/app/services/script_patch.py`. (`master_story_service.py` and
     `plot_outline_service.py` have their own *non-identical* `_apply_patch` copies —
@@ -47,6 +48,12 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
   `board/page.tsx` (`enrichArc()` had a duplicate `arc_length_type` object key —
   TS2783). `npm run lint` → no problems; `npm run build` → ok; `npm run smoke` →
   `"passed": true`.
+- **Frontend test runner.** Added `vitest` (devDependency) + `npm test` =
+  `vitest run` + `vitest.config.ts` + `board/boardModel.test.ts` (8 tests). CI
+  frontend job runs `npm test`.
+- **BUNDLE-AUDIT #7** (partial): the visuals bundle lowercases dialogue speaker
+  labels so they match the (lowercased) character reference sheets / the
+  importer's lowercase id lookup. Typo-level spelling drift is still a source fix.
 
 Other changes in this branch are below; none change backend/frontend behavior
 unless noted.

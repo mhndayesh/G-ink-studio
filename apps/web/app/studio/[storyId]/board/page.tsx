@@ -22,6 +22,7 @@ import {
   isMeaningfulChapter,
   selectedOptionValue,
 } from "./boardModel";
+import { ChapterModal, RedoArcModal, DeleteChapterDialog } from "./BoardModals";
 
 export default function PlotBoardPage() {
   const { storyId } = useParams<{ storyId: string }>();
@@ -1025,199 +1026,19 @@ export default function PlotBoardPage() {
             )}
           </div>
 
-          {/* ---- CHAPTER MODAL ---- */}
           {showChapterModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowChapterModal(false)}>
-              <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-2xl border-2 border-slate-900 bg-white p-5 sm:p-6" onClick={(e) => e.stopPropagation()}>
-                <h3 className="font-black text-lg">{chapterForm.chapter_id ? `Edit Chapter: ${chapterForm.chapter_id}` : "Create Chapter"}</h3>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-sm font-black">Arc</label>
-                    <select className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base" value={chapterForm.arc_title} onChange={(e) => setChapterForm((f) => ({ ...f, arc_title: e.target.value }))}>
-                      <option value="">— No Arc —</option>
-                      {arcForm?.arc_title && <option value={arcForm.arc_title}>{arcForm.arc_title}</option>}
-                    </select>
-                  </div>
-                  <Field label="Chapter title" value={chapterForm.chapter_title} onChange={(v) => setChapterForm((f) => ({ ...f, chapter_title: v }))} />
-                  {activeStructureBeats.length > 0 ? (
-                    <div>
-                      <label className="block text-sm font-black">Structure section</label>
-                      <select className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base" value={chapterForm.structure_section} onChange={(e) => setChapterForm((f) => ({ ...f, structure_section: e.target.value }))}>
-                        <option value="">Select beat...</option>
-                        {activeStructureBeats.map((beat) => <option key={beat.key} value={beat.key}>{beat.label}</option>)}
-                      </select>
-                    </div>
-                  ) : (
-                    <Field label="Structure section" value={chapterForm.structure_section} onChange={(v) => setChapterForm((f) => ({ ...f, structure_section: v }))} />
-                  )}
-                  <div className="sm:col-span-2"><Field label="Chapter purpose" value={chapterForm.chapter_purpose} onChange={(v) => setChapterForm((f) => ({ ...f, chapter_purpose: v }))} /></div>
-                  <div className="sm:col-span-2"><Field label="Summary" value={chapterForm.summary} onChange={(v) => setChapterForm((f) => ({ ...f, summary: v }))} textarea /></div>
-                  <Field label="Main conflict" value={chapterForm.main_conflict} onChange={(v) => setChapterForm((f) => ({ ...f, main_conflict: v }))} />
-                  <Field label="Emotional beat" value={chapterForm.emotional_beat} onChange={(v) => setChapterForm((f) => ({ ...f, emotional_beat: v }))} />
-                  <Field label="Twist or hook" value={chapterForm.twist_or_hook} onChange={(v) => setChapterForm((f) => ({ ...f, twist_or_hook: v }))} />
-                  <Field label="Ending cliffhanger" value={chapterForm.ending_cliffhanger} onChange={(v) => setChapterForm((f) => ({ ...f, ending_cliffhanger: v }))} />
-                  {/* Cross-page reference dropdowns */}
-                  <div>
-                    <label className="block text-sm font-black">Characters present</label>
-                    <select multiple className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base min-h-[80px]" value={chapterForm.characters_present.split(",").map((s) => s.trim()).filter(Boolean)} onChange={(e) => { const vals = Array.from(e.target.selectedOptions, (o) => o.value); setChapterForm((f) => ({ ...f, characters_present: vals.join(", ") })); }}>
-                      {(refData.characters || []).map((c: any) => <option key={c.id || c} value={c.name || c}>{c.name || c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-black">Factions used</label>
-                    <select multiple className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base min-h-[80px]" value={chapterForm.factions_used.split(",").map((s) => s.trim()).filter(Boolean)} onChange={(e) => { const vals = Array.from(e.target.selectedOptions, (o) => o.value); setChapterForm((f) => ({ ...f, factions_used: vals.join(", ") })); }}>
-                      {(refData.factions || []).map((f: string) => <option key={f} value={f}>{f}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-black">Threats used</label>
-                    <select multiple className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base min-h-[80px]" value={chapterForm.threats_used.split(",").map((s) => s.trim()).filter(Boolean)} onChange={(e) => { const vals = Array.from(e.target.selectedOptions, (o) => o.value); setChapterForm((f) => ({ ...f, threats_used: vals.join(", ") })); }}>
-                      {(refData.threats || []).map((t: string) => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-black">Relationships used</label>
-                    <select multiple className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3 sm:text-base min-h-[80px]" value={chapterForm.relationships_used.split(",").map((s) => s.trim()).filter(Boolean)} onChange={(e) => { const vals = Array.from(e.target.selectedOptions, (o) => o.value); setChapterForm((f) => ({ ...f, relationships_used: vals.join(", ") })); }}>
-                      {(refData.relationships || [])
-                        .filter((r: any) => r.from && r.to)
-                        .map((r: any) => <option key={r.id} value={r.id}>{r.from} ↔ {r.to}{r.type ? ` (${r.type})` : ""}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button className="rounded-xl border-2 border-slate-900 bg-slate-900 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50" onClick={submitChapter} disabled={!arcLengthSelected || !chapterForm.chapter_title || createChapter.isPending}>{chapterForm.chapter_id ? "Update Chapter" : "Create Chapter"}</button>
-                  <button className="rounded-xl border-2 border-slate-400 bg-white px-5 py-3 text-sm font-black text-slate-600" onClick={() => setShowChapterModal(false)}>Cancel</button>
-                  {createChapter.isError && <ErrorBanner error={createChapter.error as Error} />}
-                </div>
-              </div>
-            </div>
+            <ChapterModal form={chapterForm} setForm={setChapterForm} structureBeats={activeStructureBeats} refData={refData} arcTitle={arcForm?.arc_title || ""} arcLengthSelected={arcLengthSelected} onSubmit={submitChapter} submitPending={createChapter.isPending} submitError={createChapter.isError ? (createChapter.error as Error) : null} onClose={() => setShowChapterModal(false)} />
           )}
         </div>
       </Panel>
       <Panel title="plot_outline.json"><StructuredJsonView data={content} /></Panel>
 
-      {/* Redo arc structure confirmation dialog */}
       {showRedoModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowRedoModal(false)}>
-          <div className="w-full max-w-2xl rounded-2xl border-2 border-red-600 bg-white p-6 shadow-[6px_6px_0_#991b1b]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 text-2xl">!</span>
-              <div>
-                <h3 className="text-lg font-black text-red-700">Redo Arc Structure</h3>
-                <p className="mt-1 text-sm font-semibold text-slate-700">
-                  This preserves the arc overview, but clears generated chapter work so the structure can be decided again from the beginning.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-xl border-2 border-red-300 bg-red-50 p-3 text-sm text-red-900">
-              <p className="font-black">This cannot be undone from this screen.</p>
-              <ul className="mt-2 list-disc pl-5 text-xs font-semibold">
-                <li>All plot chapters for this arc will be cleared.</li>
-                <li>Scene cards tied to those chapters will be cleared.</li>
-                <li>The generated Manga Script will be reset to draft.</li>
-                <li>The arc title, summary, conflicts, characters, and ending target will be kept.</li>
-              </ul>
-            </div>
-
-            <div className="mt-4">
-              <label className="block text-sm font-black">New narrative structure</label>
-              <select
-                className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm"
-                value={redoStructure}
-                onChange={(e) => setRedoStructure(e.target.value)}
-              >
-                <option value="">Select...</option>
-                {(content.narrative_structure?.options || []).map((option: string) => <option key={option} value={option}>{option}</option>)}
-              </select>
-              {redoStructure === "Custom" && (
-                <CustomInput
-                  label="Custom narrative structure"
-                  value={redoCustomStructure}
-                  onChange={setRedoCustomStructure}
-                  placeholder="Describe the replacement structure..."
-                />
-              )}
-            </div>
-
-            <div className="mt-4">
-              <label className="block text-sm font-black">Type RESET ARC to confirm</label>
-              <input
-                className="mt-1.5 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2.5 text-sm font-bold"
-                value={redoConfirmation}
-                onChange={(e) => setRedoConfirmation(e.target.value)}
-                placeholder="RESET ARC"
-              />
-            </div>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                className="rounded-xl border-2 border-red-600 bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => redoArcMut.mutate()}
-                disabled={!redoStructure || redoConfirmation !== "RESET ARC" || redoArcMut.isPending}
-              >
-                {redoArcMut.isPending ? "Resetting..." : "Reset Chapters and Script"}
-              </button>
-              <button
-                className="rounded-xl border-2 border-slate-900 bg-white px-4 py-2.5 text-sm font-black hover:bg-slate-50"
-                onClick={() => setShowRedoModal(false)}
-                disabled={redoArcMut.isPending}
-              >
-                Cancel
-              </button>
-            </div>
-            {redoArcMut.isError && <p className="mt-3 text-xs font-bold text-red-600">{(redoArcMut.error as Error).message}</p>}
-          </div>
-        </div>
+        <RedoArcModal structureOptions={content.narrative_structure?.options || []} redoStructure={redoStructure} setRedoStructure={setRedoStructure} redoCustomStructure={redoCustomStructure} setRedoCustomStructure={setRedoCustomStructure} redoConfirmation={redoConfirmation} setRedoConfirmation={setRedoConfirmation} onConfirm={() => redoArcMut.mutate()} isPending={redoArcMut.isPending} errorMessage={redoArcMut.isError ? (redoArcMut.error as Error).message : ""} onClose={() => setShowRedoModal(false)} />
       )}
 
-      {/* ── Delete confirmation dialog ── */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setDeleteTarget(null)}>
-          <div className="w-full max-w-md rounded-2xl border-2 border-slate-900 bg-white p-6 shadow-[6px_6px_0_#111827]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 text-2xl">⚠️</span>
-              <div>
-                <h3 className="font-black text-lg text-slate-900">Delete Chapter {deleteTarget.number}?</h3>
-                <p className="mt-1 text-sm font-semibold text-slate-600">&ldquo;{deleteTarget.title}&rdquo;</p>
-              </div>
-            </div>
-
-            {deleteTarget.isLast ? (
-              <div className="mt-4 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800">
-                <span className="font-black">Last chapter</span> — no chapters follow this one, so the story will stay unlocked.
-                Any scenes attached to this chapter will also be removed.
-              </div>
-            ) : (
-              <div className="mt-4 rounded-xl border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
-                <p className="font-black">⚠ This will lock the story.</p>
-                <p className="mt-1">Chapters that come after this one depend on it for continuity. You will need to:</p>
-                <ol className="mt-2 ml-4 list-decimal space-y-0.5 text-xs font-semibold">
-                  <li>Recreate Chapter {deleteTarget.number}</li>
-                  <li>Review and confirm each later chapter in order</li>
-                  <li>All writing and scripting is disabled until the lock is cleared</li>
-                </ol>
-              </div>
-            )}
-
-            <div className="mt-5 flex gap-2">
-              <button
-                className="flex-1 rounded-xl border-2 border-red-500 bg-red-500 px-4 py-2.5 text-sm font-black text-white hover:bg-red-600"
-                onClick={() => deleteChapterMut.mutate(deleteTarget.id)}
-                disabled={deleteChapterMut.isPending}
-              >
-                {deleteChapterMut.isPending ? "Deleting…" : "Yes, Delete"}
-              </button>
-              <button
-                className="flex-1 rounded-xl border-2 border-slate-900 bg-white px-4 py-2.5 text-sm font-black hover:bg-slate-50"
-                onClick={() => setDeleteTarget(null)}
-              >
-                Cancel
-              </button>
-            </div>
-            {deleteChapterMut.isError && <p className="mt-3 text-xs font-bold text-red-600">{(deleteChapterMut.error as Error).message}</p>}
-          </div>
-        </div>
+        <DeleteChapterDialog target={deleteTarget} onConfirm={() => deleteChapterMut.mutate(deleteTarget.id)} isPending={deleteChapterMut.isPending} errorMessage={deleteChapterMut.isError ? (deleteChapterMut.error as Error).message : ""} onClose={() => setDeleteTarget(null)} />
       )}
     </div>
   );

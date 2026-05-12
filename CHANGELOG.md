@@ -15,15 +15,19 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
   words; `compile_visual_prompt()` joins + prefixes; `negative_prompt()` gives the
   standard B&W-manga exclusion list. `llm_service.py` prompt schemas now ask the
   model for that shape directly (`STYLE_INSTRUCTION`).
-- **BUNDLE-AUDIT export fixes** (`export_service.py`): camera-shot slot drops
-  "Action Shot"/"Reaction Shot"/"Custom" (#2); `Render mode` derived from in-frame
-  named-cast count, with a "pick 2 references" note for 3+ (#3); character &
-  location AI prompts rebuilt clean (#4/#6); object-only panels drop the
-  "Expression: N/A …" line (#8); `export/validate` flags source prompts that still
-  carry colour/lighting/style noise.
-- **Refactor:** `apps/api/app/api/v1/export.py` (~1690-line router) split — the
+- **BUNDLE-AUDIT export fixes** (`export_service.py`): scrambled page
+  `Location:` headers repaired against the panel content, with a `location_mismatch`
+  validator warning (#1); camera-shot slot drops "Action Shot"/"Reaction Shot"/"Custom"
+  (#2); `Render mode` derived from in-frame named-cast count, with a "pick 2 references"
+  note for 3+ (#3); character & location AI prompts rebuilt clean (#4/#6); object-only
+  panels drop the "Expression: N/A …" line (#8); `export/validate` flags source prompts
+  that still carry colour/lighting/style noise.
+- **Refactors:** `apps/api/app/api/v1/export.py` (~1690-line router) split — the
   ~45 rendering helpers moved to `apps/api/app/services/export_service.py`; the
-  router is now ~265 lines. Behavior unchanged.
+  router is now ~265 lines. Shared "is this chapter/scene/page non-empty?" predicates
+  (duplicated in `StoryService` and `ChapterScriptService`) moved to
+  `apps/api/app/services/content_inspector.py` (`chapter_script_service.py`
+  1783→1685, `story_service.py` 369→280). Behavior unchanged.
 
 Other changes in this branch are below; none change backend/frontend behavior
 unless noted.

@@ -1,15 +1,15 @@
 # Source Bundle Audit — `new-g-ink-xport/`
 
-> **Status (cleanup branch):** The *export layer* now mitigates several of these on the
+> **Status (cleanup branch):** The *export layer* now mitigates most of these on the
 > way out — see `apps/api/app/services/visual_prompt.py` + the changes in
 > `export_service.py`. Specifically:
+> - **#1 (scrambled `Location:` ↔ panel mapping)** — when a page's stored Location isn't mentioned in any of its panels but exactly one *other* known location is, the visuals export prefers the location the panels actually depict and annotates the header ("corrected from '<old>' — panels depict this setting"); empty headers are filled the same way. `export/validate` gains a `location_mismatch` (high) warning. **Still fix at source** (the scene→location assignment should follow the panel visuals so Purpose / Location / panel content agree) — this is only a guard, and it can't help a page where *zero* known locations are mentioned in the panels.
 > - **#2 (bad shot slot)** — `canonical_camera_shot()` drops "Action Shot"/"Reaction Shot"/"Custom" from the panel header tag list (and from `panels.csv`).
 > - **#3 (wrong render mode)** — `Render mode` is now derived from the in-frame named-cast count (`render_mode_for_cast`): 0→`t2i`, 1→`i2i`, 2→`i2i-2refs`, 3+→`i2i-2refs` + a "pick 2 references" note. (Counts only *speaking* characters at export time; silent ones are missed.)
 > - **#4 / #5 / #6 (dirty character / location prompts; colour; mixed style words)** — every exported AI prompt is now built through `compile_visual_prompt()`: colour words stripped, lighting / "cinematic" / "noir" / "atmospheric" / render-quality / per-entity style tokens removed, and the single fixed prefix **`black and white Japanese manga style`** prepended. Negatives go through `negative_prompt()` (standard B&W-manga exclusion list).
-> - **#8** — an `Expression: N/A …` line on an object-only panel is omitted.
-> - **validation #8** — `export/validate` now also flags prompts that still contain colour/lighting/style noise in the *source* data (info level).
+> - **#8** — an `Expression: N/A …` line on an object-only panel is omitted; `export/validate` also flags source prompts that still carry colour/lighting/style noise (info).
 >
-> Still **upstream-only** (the generator should still be fixed at source — these are not yet handled): **#1** (scrambled `Location:` ↔ panel mapping), **#7** (non-canonical character spelling), and improving the LLM *generation* so the stored prompts are already clean — the prompt schemas in `llm_service.py` now ask the model for short, visual-only, colour-free, style-word-free output (`STYLE_INSTRUCTION`), but old stored data is only cleaned on export.
+> Still **upstream-only**: **#7** (non-canonical character spelling), and improving the LLM *generation* so the stored prompts/locations are already clean — the prompt schemas in `llm_service.py` now ask the model for short, visual-only, colour-free, style-word-free output (`STYLE_INSTRUCTION`), but old stored data is only cleaned on export.
 
 *What's wrong in the exported `others-*.md` bundle, ordered by impact, written so it can be fixed at the generator that produces these files. None of this blocks the studio today — the importer works around most of it — but every fix makes the output cleaner without the studio having to guess.*
 

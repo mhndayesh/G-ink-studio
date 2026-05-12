@@ -1147,6 +1147,35 @@ class LLMService:
             if user_notes:
                 identity_context_msg += f"\n=== USER NOTES FOR THIS CHARACTER ===\n{user_notes}\nTreat these notes as the user's creative intent. Align ALL generated fields with this description.\n"
 
+        # ---- Build auto-generate side cast instructions ----
+        auto_gen_context_msg = ""
+        if page == "side" and "auto_side_cast" in target_fields:
+            char_data = context.get("characters", {})
+            major_profiles = char_data.get("created_major_character_profiles", [])
+            side_profiles = char_data.get("created_side_character_profiles", [])
+            existing_major = [p.get("character_name", "") for p in major_profiles if p.get("character_name")]
+            existing_side = [p.get("character_name", "") for p in side_profiles if p.get("character_name")]
+            auto_gen_context_msg = "\n\n=== AUTO SIDE CHARACTER GENERATION ===\n"
+            auto_gen_context_msg += (
+                "Analyze the full story context and identify every supporting character the story logically needs "
+                "but that doesn't already exist. Sources to mine:\n"
+                "  - Major character backstories (family, teachers, rivals, childhood friends explicitly mentioned)\n"
+                "  - Faction structures (guards, commanders, priests, enforcers, recruiters)\n"
+                "  - Chapter events (witnesses, informants, helpers, enemies in specific scenes)\n"
+                "  - World rules and setting (roles that must exist given the genre: healers, merchants, elders, etc.)\n"
+                "  - Threat organisations (lieutenants, minions, victims, resistors, informants)\n"
+                "  - Plot threads (characters referenced but not yet profiled)\n"
+            )
+            if existing_major:
+                auto_gen_context_msg += f"Existing MAJOR characters — DO NOT recreate any of these: {', '.join(existing_major)}\n"
+            if existing_side:
+                auto_gen_context_msg += f"Existing SIDE characters — DO NOT duplicate any of these: {', '.join(existing_side)}\n"
+            auto_gen_context_msg += (
+                "Generate as many profiles as the story clearly implies — no more, no fewer. "
+                "Every profile must be story-specific and directly grounded in the context above. "
+                "Do not invent characters that have no story basis.\n"
+            )
+
         # ---- Build court optimization ----
         court_context_msg = ""
         if page == "court":
@@ -1213,7 +1242,7 @@ class LLMService:
             f"Fields to generate: [{field_list}]\n"
             f"Partial input already filled: {json.dumps(partial_input, ensure_ascii=False)}\n"
             f"{constraints_msg}"
-            f"{arc_context_msg}{chapter_context_msg}{scene_context_msg}{thread_context_msg}{location_context_msg}{identity_context_msg}{court_context_msg}{script_context_msg}"
+            f"{arc_context_msg}{chapter_context_msg}{scene_context_msg}{thread_context_msg}{location_context_msg}{identity_context_msg}{auto_gen_context_msg}{court_context_msg}{script_context_msg}"
             f"Current compact story context: {json.dumps(compact_context, ensure_ascii=False)}"
             f"{schema_hint}"
         )

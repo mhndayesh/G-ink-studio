@@ -179,6 +179,11 @@ export const api = {
   syncScriptSpeakers: (storyId: string) =>
     apiFetch<{ created: string[]; already_present: string[]; count: number }>(`/stories/${storyId}/characters/sync-script-speakers`, { method: "POST" }),
 
+  autoGenerateSideCast: (storyId: string) =>
+    apiFetch<{ created: string[]; skipped: string[]; count: number; used_fallback: boolean; warnings: string[] }>(
+      `/stories/${storyId}/characters/auto-generate-side`, { method: "POST" }
+    ),
+
   patchStoryStartWorkflow: (storyId: string, body: any) => apiFetch<any>(`/stories/${storyId}/plot-outline/story-start-workflow`, { method: "PATCH", body: JSON.stringify(body) }),
   // NOTE(dev): extractEvents is disabled — the chapter-script event pipeline is orphaned.
   // detected_events_from_script are written to chapter_script.json but never consumed downstream

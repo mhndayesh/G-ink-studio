@@ -142,6 +142,15 @@ export default function SideCastPage() {
     },
   });
 
+  const [autoGenResult, setAutoGenResult] = useState<{ created: string[]; count: number; used_fallback: boolean } | null>(null);
+  const autoGenSide = useMutation({
+    mutationFn: () => api.autoGenerateSideCast(storyId),
+    onSuccess: (d: any) => {
+      chars.refetch();
+      setAutoGenResult({ created: d.created || [], count: d.count || 0, used_fallback: d.used_fallback || false });
+    },
+  });
+
   function handleApplyEi(results: any) {
     setProfileData((prev) => deepMergeProfile(prev, mapCharacterAiToProfileData(results?.generated_fields || results || {}, false)));
     setAiSideResults(null);
@@ -194,19 +203,44 @@ export default function SideCastPage() {
         <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
           <span className="font-bold">Major: <span className="text-amber-700">{majorCount}</span></span>
           <span className="font-bold">Side: <span className="text-indigo-600">{sideProfiles.length}</span></span>
-          <button
-            className="ml-auto rounded-xl border-2 border-indigo-600 bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
-            onClick={() => {
-              if (!confirm("Scan all chapter scripts and create stub side profiles for any speaker without one?\n\nSafe to run multiple times — existing profiles are never overwritten.")) return;
-              setSyncResult(null);
-              syncSpeakers.mutate();
-            }}
-            disabled={syncSpeakers.isPending}
-            title="Create stub side profiles for every script speaker that has no profile yet"
-          >
-            {syncSpeakers.isPending ? "Scanning…" : "⚡ Sync Script Speakers"}
-          </button>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <button
+              className="rounded-xl border-2 border-violet-600 bg-violet-50 px-3 py-1.5 text-xs font-black text-violet-800 hover:bg-violet-100 disabled:opacity-50"
+              onClick={() => {
+                if (!confirm("Analyse the full story and auto-generate side characters that fit the narrative.\n\nExisting profiles are never overwritten.\n\nThis may take 15–30 seconds if LLM is enabled.")) return;
+                setAutoGenResult(null);
+                autoGenSide.mutate();
+              }}
+              disabled={autoGenSide.isPending}
+              title="AI reads your story and creates fully-formed side characters it finds implied in the narrative"
+            >
+              {autoGenSide.isPending ? "Generating…" : "✦ Auto-Generate from Story"}
+            </button>
+            <button
+              className="rounded-xl border-2 border-indigo-600 bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+              onClick={() => {
+                if (!confirm("Scan all chapter scripts and create stub side profiles for any speaker without one?\n\nSafe to run multiple times — existing profiles are never overwritten.")) return;
+                setSyncResult(null);
+                syncSpeakers.mutate();
+              }}
+              disabled={syncSpeakers.isPending}
+              title="Create stub side profiles for every script speaker that has no profile yet"
+            >
+              {syncSpeakers.isPending ? "Scanning…" : "⚡ Sync Script Speakers"}
+            </button>
+          </div>
         </div>
+        {autoGenResult && (
+          <div className={`mb-3 rounded-xl border-2 p-3 text-xs ${autoGenResult.count > 0 ? "border-violet-400 bg-violet-50 text-violet-800" : "border-slate-300 bg-slate-50 text-slate-600"}`}>
+            {autoGenResult.used_fallback && (
+              <span className="mb-1 block font-bold text-amber-700">⚠ LLM not configured — deterministic fallback used. Enable LLM to get story-specific characters.</span>
+            )}
+            {autoGenResult.count > 0
+              ? `Created ${autoGenResult.count} side character(s): ${autoGenResult.created.join(", ")}. Each has a full profile and story role — edit to refine.`
+              : "No new side characters were generated (all implied characters may already exist)."}
+          </div>
+        )}
+        {autoGenSide.isError && <div className="mb-3 text-xs text-red-700 font-bold">Auto-generate failed — check backend logs.</div>}
         {syncResult && (
           <div className={`mb-3 rounded-xl border-2 p-3 text-xs ${syncResult.count > 0 ? "border-emerald-400 bg-emerald-50 text-emerald-800" : "border-slate-300 bg-slate-50 text-slate-600"}`}>
             {syncResult.count > 0

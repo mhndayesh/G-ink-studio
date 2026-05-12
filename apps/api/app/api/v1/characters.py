@@ -19,6 +19,8 @@ from app.models.api import (
     ValidationResponse,
 )
 from app.services.character_service import CharacterService
+from app.services.llm_service import LLMService
+from app.main_dependencies import get_llm_service
 
 router = APIRouter(dependencies=[Depends(require_story_access)], prefix="/stories/{story_id}/characters", tags=["characters"])
 
@@ -165,6 +167,77 @@ def _collect_script_speakers(story_id: str, registry: SQLiteRegistry) -> set[str
                     if name:
                         speakers.add(name.lower())
     return speakers
+
+
+@router.post("/auto-generate-side")
+def auto_generate_side_cast(
+    story_id: str,
+    service: CharacterService = Depends(get_character_service),
+    llm: LLMService = Depends(get_llm_service),
+    registry: SQLiteRegistry = Depends(get_registry),
+):
+    """Analyse full story context and generate fully-formed side character profiles using the LLM.
+
+    Creates as many profiles as the story logically implies — no fixed count.
+    Skips any name that already exists in major or side profiles.
+    """
+    context: dict = {}
+    for file_type in ["master_story", "characters", "plot_outline", "plot_workspace", "chapter_script"]:
+        rec = registry.get_current_file(story_id, file_type)
+        if rec:
+            context[file_type] = rec.get("json_copy", {})
+
+    result = llm.generate_fields(
+        story_id=story_id,
+        page="side",
+        target_fields=["auto_side_cast"],
+        partial_input={},
+        context=context,
+        generation_hints={"auto_generate": True},
+    )
+
+    candidates = (result.get("generated_fields") or {}).get("auto_side_cast", [])
+    if not isinstance(candidates, list):
+        candidates = []
+
+    chars_data = service.get_characters(story_id)
+    existing_names: set[str] = {
+        (p.get("character_name") or "").strip().lower()
+        for profiles in (
+            chars_data.get("created_major_character_profiles", []),
+            chars_data.get("created_side_character_profiles", []),
+        )
+        for p in profiles
+        if p.get("character_name")
+    }
+
+    created: list[str] = []
+    skipped: list[str] = []
+    for char in candidates:
+        if not isinstance(char, dict):
+            continue
+        name = (char.get("character_name") or "").strip()
+        if not name:
+            continue
+        if name.lower() in existing_names:
+            skipped.append(name)
+            continue
+        profile_data = {k: v for k, v in char.items() if k != "character_name"}
+        service.create_side_character_profile(
+            story_id=story_id,
+            character_name=name,
+            profile_data=profile_data,
+        )
+        created.append(name)
+        existing_names.add(name.lower())
+
+    return ok({
+        "created": created,
+        "skipped": skipped,
+        "count": len(created),
+        "used_fallback": result.get("used_fallback", False),
+        "warnings": result.get("warnings", []),
+    })
 
 
 @router.post("/sync-script-speakers")

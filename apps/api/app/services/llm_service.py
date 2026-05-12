@@ -12,6 +12,7 @@ import httpx
 from app.core.config import Settings
 from uuid import uuid4
 from app.repositories.sqlite_registry import SQLiteRegistry
+from app.services.visual_prompt import STYLE_INSTRUCTION
 
 logger = logging.getLogger("manga.llm")
 
@@ -209,7 +210,7 @@ class LLMService:
             "RETURN JSON ONLY with top-level key 'pages_enhanced' — an array. "
             "Each element: { page_index (int, 0-based matching scene index), page_mood (string), "
             "panels (array of { panel_index (int, 0-based, up to 4), "
-            "visual (what is drawn — 1-2 sentences, manga-panel style, visual-first), "
+            "visual (what is drawn — ONE short clause; only things visibly on the page; no colour names, no lighting/mood words — the art is black and white), "
             "character_action (what the character physically does), "
             "background_details (environment details), "
             "facial_expression (emotion shown on face), "
@@ -510,12 +511,12 @@ class LLMService:
                 "name": "evocative location name that fits the story world and genre",
                 "type": "location category (e.g. Interior/Residential, Exterior/Urban, Forest, Dungeon, Market, School, Rooftop, Underground)",
                 "description": "rich visual description: lighting mood, dominant colors, textures, atmosphere, key props, time of day feel, story significance",
-                "positive_prompt": "complete manga-style diffusion prompt — include: environment type, architectural or natural details, lighting (harsh/soft/moody), color palette, atmosphere tags, style keywords (manga background, highly detailed, cinematic composition, cel shading)",
-                "negative_prompt": "comma-separated exclusion terms: characters, people, text, watermark, blurry, low quality, nsfw",
+                "positive_prompt": "SHORT comma-separated list of what is drawn in this place — environment type, key structural / architectural / natural details, props, light-vs-shadow words (e.g. 'deep shadows', 'high contrast'). " + STYLE_INSTRUCTION,
+                "negative_prompt": "comma-separated exclusion terms, e.g.: people, characters, text, watermark, blurry, low quality, nsfw",
                 "locations": (
                     "array of 5-8 location objects covering key story settings — each: "
                     "{ name, type, description(visual prose), "
-                    "positive_prompt(complete manga diffusion prompt with lighting+color+detail+style tags), "
+                    "positive_prompt(SHORT comma-separated list of drawn details — environment, structure, props, light/shadow words; no colour names, no 'cinematic'/'atmospheric', no style word), "
                     "negative_prompt(short exclusion list) }. "
                     "Base locations on chapters, world rules, factions, and character home/work places from context. "
                     "Avoid duplicating any locations already in context.locations[]."
@@ -917,8 +918,8 @@ class LLMService:
             "locations": (
                 "You are the Manga Maker location designer. Generate location data as JSON. "
                 "Use the FULL story context — world rules, factions, threats, character homes/workplaces, AND every chapter's setting — to create visually distinct, story-consistent locations. "
-                "Each location must have a clear visual identity: specific lighting, color palette, atmosphere, and structural details a manga artist could draw from. "
-                "positive_prompt MUST be a complete AI image generation prompt in manga art style, ready for a diffusion model. Include: scene type, architecture/nature, lighting quality, color palette, mood, and style tags (manga background, highly detailed, cinematic). "
+                "Each location must have a clear visual identity: distinct structure, materials, props, and light-vs-shadow character a manga artist could draw from (the project renders black and white, so think in light/dark, not colour). "
+                "positive_prompt MUST be SHORT — a comma-separated list of what is drawn (scene type, architecture/nature, key props, light-vs-shadow words like 'deep shadows'/'high contrast'). No colour names (black and white), no lighting/mood directives, no 'cinematic'/'atmospheric', no style word. "
                 "When generating a list (target_field='locations'), base each location on actual chapters and story places — not generic fantasy defaults. "
                 "Return JSON only: keys matching the requested target_fields. "
                 "CRITICAL: For each target field, fill EVERY sub-field listed in the Expected field schemas below. Do not omit any sub-field."
@@ -926,17 +927,17 @@ class LLMService:
             "faction_visuals": (
                 "You are the Manga Maker faction visual designer. Generate faction visual signature data as JSON. "
                 "Use the full story context (factions, world rules, threats, AND characters) — especially the appearance, clothing, and faction alignment of characters who belong to each faction. "
-                "Their outfits, color palettes, and visual motifs should inform the faction's visual signature. "
+                "Their outfits, insignia, and visual motifs should inform the faction's visual signature. "
                 "Return JSON only: keys matching the requested target_fields. "
-                "Each faction signature must include visual_signature (prose description of faction look and feel), positive_prompt (diffusion-ready manga-style prompt), and negative_prompt. "
+                "Each faction signature must include visual_signature (prose description of the faction's look for the artist), positive_prompt (SHORT comma-separated list of drawn uniform/gear details — fabric, cut, insignia, accessories; no colour names, no lighting/mood, no style word; " + STYLE_INSTRUCTION + "), and negative_prompt. "
                 "CRITICAL: For each target field, fill EVERY sub-field. Do not omit any sub-field."
             ),
             "character_visuals": (
                 "You are the Manga Maker character visual designer. Generate character appearance and AI prompt data as JSON. "
                 "Use the full story context (world style, faction, character backstory, personality, arc) to design visually expressive manga characters. "
                 "Return JSON only: keys matching the requested target_fields. "
-                "ai_image_prompt_notes must be a complete, manga-style diffusion prompt with body type, hair, eyes, outfit, expression, background, and style tags. "
-                "negative_prompt_notes must list what to avoid. Do NOT fabricate character names not in context. "
+                "ai_image_prompt_notes must be a SHORT comma-separated list of the VISIBLE PERSON ONLY — build/age, face shape, hair, eyes, signature outfit, iconic prop. No scene, no pose, no background, no lighting, no colour names, no 'cinematic'/'noir', no style word. " + STYLE_INSTRUCTION + " "
+                "negative_prompt_notes must list what to avoid (short). Do NOT fabricate character names not in context. "
                 "CRITICAL: For each target field, fill EVERY sub-field. Do not omit any sub-field."
             ),
             "seed": (
@@ -1308,8 +1309,8 @@ class LLMService:
                     f"\nGenerate exactly {target_count} location objects as the 'locations' array. "
                     "Each must be a REAL story place inferred from the chapters, world, factions, and characters above. "
                     "Do NOT generate generic or placeholder locations. "
-                    "Each location needs: name, type, description (rich visual prose), "
-                    "positive_prompt (complete manga-style diffusion prompt), negative_prompt.\n"
+                    "Each location needs: name, type, description (rich visual prose for the artist), "
+                    "positive_prompt (SHORT comma-separated list of drawn details — no colour, no lighting/mood directives, no style word), negative_prompt.\n"
                 )
             else:
                 # Single location fill
@@ -1319,7 +1320,7 @@ class LLMService:
                         location_context_msg += f" (type: {single_type})"
                     location_context_msg += (
                         "\nBase the description and prompts on this location's role in the story context above. "
-                        "Make positive_prompt a complete, manga-style diffusion prompt.\n"
+                        "positive_prompt = a SHORT comma-separated list of drawn details (no colour, no lighting/mood directives, no style word).\n"
                     )
                 else:
                     location_context_msg += "\nFill the requested fields for this location based on the story context above.\n"

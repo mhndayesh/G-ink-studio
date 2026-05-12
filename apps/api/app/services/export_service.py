@@ -12,6 +12,14 @@ import json
 import zipfile
 
 from app.repositories.sqlite_registry import SQLiteRegistry
+from app.services.visual_prompt import (
+    STYLE_PREFIX,
+    canonical_camera_shot,
+    compile_visual_prompt,
+    negative_prompt,
+    render_mode_for_cast,
+    sanitize_visual_prompt,
+)
 
 
 def story_safe_title(files: dict, fallback: str = "story") -> tuple[str, str]:
@@ -310,12 +318,8 @@ def _character_reference_lines(characters: dict) -> list[str]:
         contrast = _safe(details.get("visual_contrast_with_other_characters"))
         if contrast:
             lines.append(f"  Visual contrast: {contrast}")
-        ai_pos = _safe(details.get("ai_image_prompt_notes"))
-        ai_neg = _safe(details.get("negative_prompt_notes"))
-        if ai_pos:
-            lines.append(f"  AI prompt (positive): {ai_pos}")
-        if ai_neg:
-            lines.append(f"  AI prompt (negative): {ai_neg}")
+        lines.append(f"  AI prompt (positive): {compile_visual_prompt(', '.join(_character_visual_phrases(details, profile)))}")
+        lines.append(f"  AI prompt (negative): {negative_prompt(details.get('negative_prompt_notes'))}")
         lines.append("")
     return lines
 
@@ -379,12 +383,29 @@ def _location_index_lines(scripts: list[dict], loc_by_id: dict[str, dict] | None
     return lines
 
 
+def _panel_named_cast_count(panel: dict) -> int:
+    """Distinct named speaking characters in a panel (excludes Narrator / extras).
+
+    Best signal available at export time for the render-mode policy; under-counts
+    silent characters, which is fine — it never over-promises a 2-ref stitch.
+    """
+    names: set[str] = set()
+    for d in _as_list(panel.get("dialogue", [])):
+        if not isinstance(d, dict):
+            continue
+        spk = _safe(d.get("speaker_name") or d.get("speaker") or d.get("speaker_id")).strip().lower()
+        if spk and spk not in ("narrator", "narration", "?", "background character", "background", "sfx"):
+            names.add(spk)
+    return len(names)
+
+
 def _panel_full_block(panel: dict, indent: str = "    ") -> list[str]:
     """Render every production-relevant panel field for the artist."""
     out: list[str] = []
     panel_num = _safe(panel.get("panel_number") or panel.get("panel_id"))
     shot_block = panel.get("camera_shot")
-    camera = _selected(shot_block) if isinstance(shot_block, dict) else _safe(shot_block)
+    camera_raw = _selected(shot_block) if isinstance(shot_block, dict) else _safe(shot_block)
+    camera = canonical_camera_shot(camera_raw)  # BUNDLE-AUDIT #2: drop "Action Shot"/"Reaction Shot" etc.
     size_block = panel.get("panel_size")
     size = _selected(size_block) if isinstance(size_block, dict) else _safe(size_block)
     pacing_block = panel.get("pacing")
@@ -406,8 +427,12 @@ def _panel_full_block(panel: dict, indent: str = "    ") -> list[str]:
         ("custom_panel_details", "Custom"),
     ]:
         v = _safe(panel.get(key))
-        if v:
-            out.append(f"{indent}  {label}: {v}")
+        if not v:
+            continue
+        # BUNDLE-AUDIT #8: an "N/A …" expression on an object-only panel is noise.
+        if key == "facial_expression" and v.strip().lower().startswith(("n/a", "none", "not applicable")):
+            continue
+        out.append(f"{indent}  {label}: {v}")
     sfx_items = _as_list(panel.get("sound_effects"))
     sfx_parts = []
     for s in sfx_items:
@@ -435,12 +460,12 @@ def _panel_full_block(panel: dict, indent: str = "    ") -> list[str]:
             continue
         bubble_tag = f" ({bubble})" if bubble and bubble.lower() not in ("", "normal", "standard") else ""
         out.append(f'{indent}  Dialogue: {speaker}{bubble_tag}: "{text}"')
-    # Render mode hint — always emit so studio can read it; skip only if absent
-    rm_block = panel.get("render_mode")
-    if rm_block:
-        rm = _selected(rm_block) if isinstance(rm_block, dict) else _safe(rm_block)
-        if rm:
-            out.append(f"{indent}  Render mode: {rm}")
+    # Render mode — BUNDLE-AUDIT #3: derive from the in-frame named cast, not from
+    # panel position. 0 chars → t2i, 1 → i2i, 2 → i2i-2refs, 3+ → i2i-2refs + a
+    # warning (a 2-reference stitch can't hold a third character). The studio still
+    # resolves the *effective* mode against the reference images actually on file.
+    rm, rm_warn = render_mode_for_cast(_panel_named_cast_count(panel))
+    out.append(f"{indent}  Render mode: {rm}" + (f"  (note: {rm_warn})" if rm_warn else ""))
     return out
 
 
@@ -463,12 +488,11 @@ def _locations_section_lines(po: dict) -> list[str]:
         desc = _safe(loc.get("description"))
         if desc:
             lines.append(f"  Description: {desc}")
-        pos = _safe(loc.get("positive_prompt"))
-        if pos:
-            lines.append(f"  AI prompt (positive): {pos}")
-        neg = _safe(loc.get("negative_prompt"))
-        if neg:
-            lines.append(f"  AI prompt (negative): {neg}")
+        # Compile a clean, B&W-manga prompt: structural fragments from the prose
+        # description + the LLM positive_prompt, colour/lighting/style stripped,
+        # STYLE_PREFIX prepended (BUNDLE-AUDIT #6).
+        lines.append(f"  AI prompt (positive): {compile_visual_prompt(loc_type, loc.get('positive_prompt'), desc)}")
+        lines.append(f"  AI prompt (negative): {negative_prompt(loc.get('negative_prompt') or 'people, characters')}")
         lines.append("")
     return lines
 
@@ -621,18 +645,22 @@ def _panels_csv(scripts: list[dict]) -> str:
                     for s in sfx_items
                     if (isinstance(s, dict) and _safe(s.get("sfx_text"))) or (isinstance(s, str) and s.strip())
                 )
+                shot_raw = _selected(shot_block) if isinstance(shot_block, dict) else _safe(shot_block)
+                expr = _safe(panel.get("facial_expression"))
+                if expr.strip().lower().startswith(("n/a", "none", "not applicable")):
+                    expr = ""
                 writer.writerow([
                     ch_num, ch_id, ch_title,
                     page_num, page_id, scene_id,
                     _safe(panel.get("panel_number")),
                     _safe(panel.get("panel_id")),
                     _selected(size_block) if isinstance(size_block, dict) else _safe(size_block),
-                    _selected(shot_block) if isinstance(shot_block, dict) else _safe(shot_block),
+                    canonical_camera_shot(shot_raw),  # BUNDLE-AUDIT #2
                     _selected(pacing_block) if isinstance(pacing_block, dict) else _safe(pacing_block),
                     _safe(panel.get("visual")),
                     _safe(panel.get("character_action")),
                     _safe(panel.get("background_details")),
-                    _safe(panel.get("facial_expression")),
+                    expr,
                     _safe(panel.get("pose_or_body_language")),
                     _safe(panel.get("mood")),
                     _safe(panel.get("narration")),
@@ -643,8 +671,32 @@ def _panels_csv(scripts: list[dict]) -> str:
     return buf.getvalue()
 
 
+def _character_visual_phrases(details: dict, profile: dict | None = None) -> list[str]:
+    """Visual-only descriptor fragments for a character, drawn from the structured
+    appearance fields (no scene / pose / lighting / colour — see visual_prompt.py)."""
+    parts: list[object] = []
+    for key in ("age_range", "gender_presentation", "height", "body_type", "silhouette_shape",
+                "face_shape", "skin_tone_or_markings", "hair_style", "eye_shape",
+                "clothing_style", "main_outfit_description", "iconic_item",
+                "visual_symbol_or_motif"):
+        parts.append(details.get(key))
+    for key in ("distinctive_features", "scars_or_birthmarks", "accessories", "weapons_or_tools_visible"):
+        parts.extend(_text_list(details.get(key, [])))
+    # the LLM-written notes go last so the structured fields anchor the prompt
+    parts.append(details.get("ai_image_prompt_notes"))
+    phrases: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for ph in sanitize_visual_prompt(part).split(", "):
+            k = ph.lower()
+            if ph and k not in seen:
+                seen.add(k)
+                phrases.append(ph)
+    return phrases
+
+
 def _ai_prompt_files(characters: dict) -> dict[str, str]:
-    """One file per character holding their AI image prompt notes."""
+    """One file per character holding a clean, B&W-manga AI image prompt (positive + negative)."""
     out: dict[str, str] = {}
     profiles = (characters.get("created_major_character_profiles", []) or []) + (characters.get("created_side_character_profiles", []) or [])
     for p in profiles:
@@ -654,17 +706,13 @@ def _ai_prompt_files(characters: dict) -> dict[str, str]:
         if not name:
             continue
         details = _appearance_block(p)
-        pos = _safe(details.get("ai_image_prompt_notes"))
-        neg = _safe(details.get("negative_prompt_notes"))
-        if not pos and not neg:
+        phrases = _character_visual_phrases(details, p)
+        pos = compile_visual_prompt(", ".join(phrases))
+        neg = negative_prompt(details.get("negative_prompt_notes"))
+        if pos == STYLE_PREFIX and not phrases:
             continue
         safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name).strip().replace(" ", "_") or "character"
-        body = []
-        if pos:
-            body.append("# Positive prompt\n" + pos)
-        if neg:
-            body.append("\n# Negative prompt\n" + neg)
-        out[f"{safe_name}.txt"] = "\n".join(body)
+        out[f"{safe_name}.txt"] = f"# Positive prompt\n{pos}\n\n# Negative prompt\n{neg}\n"
     return out
 
 
@@ -710,12 +758,8 @@ def _character_sheet_files(characters: dict) -> dict[str, str]:
             text = ", ".join(_text_list(details.get(key, [])))
             if text:
                 md.append(f"**{label}**: {text}")
-        ai_pos = _safe(details.get("ai_image_prompt_notes"))
-        ai_neg = _safe(details.get("negative_prompt_notes"))
-        if ai_pos:
-            md.append(f"\n## AI prompt (positive)\n{ai_pos}")
-        if ai_neg:
-            md.append(f"\n## AI prompt (negative)\n{ai_neg}")
+        md.append(f"\n## AI prompt (positive)\n{compile_visual_prompt(', '.join(_character_visual_phrases(details, p)))}")
+        md.append(f"\n## AI prompt (negative)\n{negative_prompt(details.get('negative_prompt_notes'))}")
         out[f"{safe_name}.md"] = "\n\n".join(md) + "\n"
     return out
 
@@ -1411,6 +1455,41 @@ def _validate_export(files: dict, all_scripts: list[dict]) -> dict:
                 "Export auto-lowercases for studio compatibility, but consider renaming in the source."
             ),
             "where": "Studio → Cast",
+        })
+
+    # 7. Visual prompts that carry colour / lighting / style noise (info —
+    #    export now auto-cleans these and prepends "black and white Japanese
+    #    manga style", but it's worth flagging so the source gets fixed).
+    def _is_dirty(text: object) -> bool:
+        raw = " ".join(str(text or "").split())
+        return bool(raw) and sanitize_visual_prompt(raw) != raw and sanitize_visual_prompt(raw) != ""
+    dirty_chars: list[str] = []
+    for p in profiles:
+        if not isinstance(p, dict):
+            continue
+        det = _appearance_block(p)
+        if _is_dirty(det.get("ai_image_prompt_notes")):
+            dirty_chars.append(_safe(p.get("character_name") or p.get("name")))
+    dirty_locs: list[str] = []
+    for loc in _as_list((po.get("locations") or {}).get("locations", [])):
+        if isinstance(loc, dict) and _is_dirty(loc.get("positive_prompt")):
+            dirty_locs.append(_safe(loc.get("name")))
+    if dirty_chars or dirty_locs:
+        bits = []
+        if dirty_chars:
+            bits.append("character sheet(s): " + ", ".join(filter(None, dirty_chars[:6])))
+        if dirty_locs:
+            bits.append("location(s): " + ", ".join(filter(None, dirty_locs[:6])))
+        warnings.append({
+            "level": "info",
+            "category": "prompt_noise",
+            "message": (
+                "AI image prompt(s) contain colour / lighting / 'cinematic'-style words or a per-entity "
+                "style tag — " + "; ".join(bits) + ". The export strips these and prepends "
+                "'black and white Japanese manga style' automatically; consider cleaning the source so the "
+                "stored prompt is already a short visual-only descriptor list."
+            ),
+            "where": "Studio → Cast / Locations / Faction Visuals",
         })
 
     return {"warnings": warnings, "count": len(warnings)}

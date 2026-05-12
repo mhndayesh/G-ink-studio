@@ -19,8 +19,14 @@ import {
   ARC_LENGTH_OPTS,
   ARC_LENGTH_SPECS,
   STRUCTURE_BEATS,
+  EMPTY_ARC_FORM,
+  EMPTY_CHAPTER_FORM,
+  arcLengthGuidance,
+  enrichArc,
   isMeaningfulChapter,
   selectedOptionValue,
+  type ArcForm,
+  type ChapterForm,
 } from "./boardModel";
 import { ChapterModal, RedoArcModal, DeleteChapterDialog } from "./BoardModals";
 import { StructureEditors } from "./StructureEditors";
@@ -50,10 +56,10 @@ export default function PlotBoardPage() {
 
   // Chapter modal state
   const [showChapterModal, setShowChapterModal] = useState(false);
-  const [chapterForm, setChapterForm] = useState({ chapter_id: "", arc_title: "", chapter_title: "", chapter_purpose: "", structure_section: "", summary: "", characters_present: "", relationships_used: "", factions_used: "", threats_used: "", world_rules_shown: "", power_system_shown: "", main_conflict: "", emotional_beat: "", twist_or_hook: "", ending_cliffhanger: "", custom_chapter_details: "" });
+  const [chapterForm, setChapterForm] = useState<ChapterForm>(EMPTY_CHAPTER_FORM);
 
   // Arc overview state
-  const [arcForm, setArcForm] = useState({ arc_title: "", arc_number: 1, arc_type: "", arc_length_type: "", starting_status_quo: "", main_story_question: "", central_emotional_question: "", main_external_conflict: "", main_internal_conflict: "", main_relationship_conflict: "", main_threat_used: "", ending_type_target: "" });
+  const [arcForm, setArcForm] = useState<ArcForm>(EMPTY_ARC_FORM);
 
   // Structure editors state - Kishotenketsu
   const [ki, setKi] = useState<Record<string, string>>({ initial_mystery_or_question: "", opening_image: "", chapter_range: "" });
@@ -278,24 +284,10 @@ export default function PlotBoardPage() {
     patchArc.mutate({ target_branch: "story_arc_overview.arc_length_type.selected", operation: "replace", value });
   }
 
-  function arcLengthGuidance(length: string): string {
-    const guides: Record<string, string> = {
-      "One-Shot": "Target a complete one-chapter arc.",
-      "Short Arc": "Target a compact 3-5 chapter arc with quick setup, escalation, reveal, and payoff.",
-      "Medium Arc": "Target roughly 6-10 chapters with clear midpoint pressure and a strong final payoff.",
-      "Long Arc": "Target roughly 11-16 chapters with multiple escalation turns before the climax.",
-      "Saga": "Target a large multi-phase arc with several sub-conflicts feeding one major payoff.",
-      "Season": "Target a season-length arc with opening, middle pressure, finale, and hook for the next arc.",
-      "Full Series": "Treat the structure as a full-series spine with major act breaks and long-term payoff.",
-      "Custom": "Use the user's custom arc length intent and keep chapter pacing consistent with it.",
-    };
-    return guides[length] || "";
-  }
-
   function handleStartNewArc() {
     if (!confirm("Start a new arc? This clears the arc overview form. Existing chapters and saved data are not deleted.")) return;
     const nextArcNum = (content.story_arc_overview?.arc_number || arcForm.arc_number || 1) + 1;
-    setArcForm({ arc_title: "", arc_number: nextArcNum, arc_type: "", arc_length_type: "", starting_status_quo: "", main_story_question: "", central_emotional_question: "", main_external_conflict: "", main_internal_conflict: "", main_relationship_conflict: "", main_threat_used: "", ending_type_target: "" });
+    setArcForm({ ...EMPTY_ARC_FORM, arc_number: nextArcNum });
     setArcSummary("");
     setExtendBypass(false);
   }
@@ -432,13 +424,13 @@ export default function PlotBoardPage() {
         if (Array.isArray(ch.relationships_used)) ch.relationships_used = ch.relationships_used.filter(Boolean).join(", ");
         if (Array.isArray(ch.world_rules_shown)) ch.world_rules_shown = ch.world_rules_shown.filter(Boolean).join(", ");
         if (Array.isArray(ch.power_system_shown)) ch.power_system_shown = ch.power_system_shown.filter(Boolean).join(", ");
-        setChapterForm(f => ({ ...f, ...ch }));
+        setChapterForm(f => ({ ...f, ...(ch as Partial<ChapterForm>) }));
         setShowChapterModal(true);
       } else {
         const flatCh = forceChapterIdentity(enrichChapter(gen));
         const chapterKeys = ["chapter_title","chapter_purpose","structure_section","summary","characters_present","factions_used","threats_used","relationships_used","world_rules_shown","power_system_shown","main_conflict","emotional_beat","twist_or_hook","ending_cliffhanger","custom_chapter_details"];
         if (chapterKeys.some(k => k in gen)) {
-          setChapterForm(f => ({ ...f, ...flatCh }));
+          setChapterForm(f => ({ ...f, ...(flatCh as Partial<ChapterForm>) }));
           setShowChapterModal(true);
         }
       }
@@ -449,22 +441,6 @@ export default function PlotBoardPage() {
   function handleAiBoardGenerate() {
     if (!requireAiPrereqs()) return;
     aiGen.mutate();
-  }
-
-  function enrichArc(ao: any): any {
-    return {
-      arc_title: "", arc_type: "", arc_number: 1,
-      arc_summary: "", starting_status_quo: "",
-      main_story_question: "", central_emotional_question: "",
-      main_external_conflict: "", main_internal_conflict: "",
-      main_relationship_conflict: "", main_threat_used: "",
-      minor_threats_used: [], main_factions_used: [],
-      main_characters_used: [], relationships_used: [],
-      ending_type_target: "", custom_arc_overview_details: "",
-      ...ao,
-      // LLM may return arc_length_type as { selected: "..." } — normalize to string
-      arc_length_type: selectedOptionValue(ao?.arc_length_type ?? ""),
-    };
   }
 
   function enrichChapter(ch: any): any {
@@ -493,8 +469,8 @@ export default function PlotBoardPage() {
     const gen = results?.generated_fields || results || {};
     if (gen.arc_overview) {
       const ao = enrichArc(gen.arc_overview);
-      setArcForm(f => ({ ...f, ...ao }));
-      if (ao.arc_summary) setArcSummary(ao.arc_summary);
+      setArcForm(f => ({ ...f, ...(ao as Partial<ArcForm>) }));
+      if (ao.arc_summary) setArcSummary(String(ao.arc_summary));
     }
 
     const chapterKeys = ["chapter_title","chapter_purpose","structure_section","summary","characters_present","factions_used","threats_used","relationships_used","world_rules_shown","power_system_shown","main_conflict","emotional_beat","twist_or_hook","ending_cliffhanger","custom_chapter_details"];
@@ -509,7 +485,7 @@ export default function PlotBoardPage() {
       if (Array.isArray(ch.relationships_used)) ch.relationships_used = ch.relationships_used.filter(Boolean).join(", ");
       if (Array.isArray(ch.world_rules_shown)) ch.world_rules_shown = ch.world_rules_shown.filter(Boolean).join(", ");
       if (Array.isArray(ch.power_system_shown)) ch.power_system_shown = ch.power_system_shown.filter(Boolean).join(", ");
-      setChapterForm(f => ({ ...f, ...ch }));
+      setChapterForm(f => ({ ...f, ...(ch as Partial<ChapterForm>) }));
       setShowChapterModal(true);
     } else if (gen.chapters && Array.isArray(gen.chapters) && gen.chapters.length > 0) {
       const ch = forceChapterIdentity(enrichChapter(gen.chapters[0]));
@@ -519,7 +495,7 @@ export default function PlotBoardPage() {
       if (Array.isArray(ch.relationships_used)) ch.relationships_used = ch.relationships_used.filter(Boolean).join(", ");
       if (Array.isArray(ch.world_rules_shown)) ch.world_rules_shown = ch.world_rules_shown.filter(Boolean).join(", ");
       if (Array.isArray(ch.power_system_shown)) ch.power_system_shown = ch.power_system_shown.filter(Boolean).join(", ");
-      setChapterForm(f => ({ ...f, ...ch }));
+      setChapterForm(f => ({ ...f, ...(ch as Partial<ChapterForm>) }));
       setShowChapterModal(true);
     }
     if (gen.structure) {
@@ -615,7 +591,7 @@ export default function PlotBoardPage() {
 
   function submitChapter() {
     if (!requireArcLength()) return;
-    const form = chapterForm as any;
+    const form = chapterForm;
     const body: any = {};
     // String identity fields
     if (form.chapter_id) body.chapter_id = String(form.chapter_id);
@@ -635,7 +611,7 @@ export default function PlotBoardPage() {
     // list[str] fields — accept comma-string or array (objects → name/string)
     const arrayFields = ["characters_present", "relationships_used", "factions_used", "threats_used", "world_rules_shown", "power_system_shown"] as const;
     for (const k of arrayFields) {
-      const v = form[k];
+      const v: unknown = form[k];  // normally a comma-string; tolerate an array defensively
       let items: string[] = [];
       if (typeof v === "string") {
         items = v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -647,13 +623,12 @@ export default function PlotBoardPage() {
       }
       if (items.length > 0) body[k] = items;
     }
-    createChapter.mutate(body, { onSuccess: () => { setChapterForm((f: any) => ({ ...f, chapter_id: "" })); } });
+    createChapter.mutate(body, { onSuccess: () => { setChapterForm((f) => ({ ...f, chapter_id: "" })); } });
   }
 
   function resetArcOverview() {
     if (!confirm("Reset all arc overview fields to empty?")) return;
-    const empty = { arc_title: "", arc_number: 1, arc_type: "", arc_length_type: "", starting_status_quo: "", main_story_question: "", central_emotional_question: "", main_external_conflict: "", main_internal_conflict: "", main_relationship_conflict: "", main_threat_used: "", ending_type_target: "" };
-    setArcForm(empty);
+    setArcForm(EMPTY_ARC_FORM);
     setArcSummary("");
   }
 
@@ -902,7 +877,7 @@ export default function PlotBoardPage() {
                           {isCurrent && needsCreate && (
                             <button
                               className="rounded-lg border-2 border-amber-500 bg-amber-500 px-2.5 py-1 text-[11px] font-black text-white hover:bg-amber-600"
-                              onClick={() => { setChapterForm((f: any) => ({ ...f, chapter_id: "", chapter_title: "" })); setShowChapterModal(true); }}
+                              onClick={() => { setChapterForm((f) => ({ ...f, chapter_id: "", chapter_title: "" })); setShowChapterModal(true); }}
                             >
                               Create Ch.{num}
                             </button>

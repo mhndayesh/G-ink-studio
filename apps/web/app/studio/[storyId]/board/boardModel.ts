@@ -55,6 +55,93 @@ export const CHAPTER_CONTENT_FIELDS = [
   "custom_chapter_details",
 ];
 
+/** The Plot Board "Create / Edit Chapter" modal form. All text fields are
+ *  strings; multi-select fields are stored comma-joined. `chapter_number` is
+ *  only present transiently (set from computed hints, parsed loosely on submit). */
+export interface ChapterForm {
+  chapter_id: string;
+  arc_title: string;
+  chapter_title: string;
+  chapter_purpose: string;
+  structure_section: string;
+  summary: string;
+  characters_present: string;
+  relationships_used: string;
+  factions_used: string;
+  threats_used: string;
+  world_rules_shown: string;
+  power_system_shown: string;
+  main_conflict: string;
+  emotional_beat: string;
+  twist_or_hook: string;
+  ending_cliffhanger: string;
+  custom_chapter_details: string;
+  chapter_number?: number | string;
+}
+
+export const EMPTY_CHAPTER_FORM: ChapterForm = {
+  chapter_id: "", arc_title: "", chapter_title: "", chapter_purpose: "", structure_section: "",
+  summary: "", characters_present: "", relationships_used: "", factions_used: "", threats_used: "",
+  world_rules_shown: "", power_system_shown: "", main_conflict: "", emotional_beat: "",
+  twist_or_hook: "", ending_cliffhanger: "", custom_chapter_details: "",
+};
+
+/** The "Arc overview" form. (`enrichArc` may return extra keys, e.g. arc_summary
+ *  / *_used arrays — those are spread in at runtime and patched through too.) */
+export interface ArcForm {
+  arc_title: string;
+  arc_number: number;
+  arc_type: string;
+  arc_length_type: string;
+  starting_status_quo: string;
+  main_story_question: string;
+  central_emotional_question: string;
+  main_external_conflict: string;
+  main_internal_conflict: string;
+  main_relationship_conflict: string;
+  main_threat_used: string;
+  ending_type_target: string;
+}
+
+export const EMPTY_ARC_FORM: ArcForm = {
+  arc_title: "", arc_number: 1, arc_type: "", arc_length_type: "", starting_status_quo: "",
+  main_story_question: "", central_emotional_question: "", main_external_conflict: "",
+  main_internal_conflict: "", main_relationship_conflict: "", main_threat_used: "", ending_type_target: "",
+};
+
+/** Short prompt-hint guidance string for a chosen arc length. */
+export function arcLengthGuidance(length: string): string {
+  const guides: Record<string, string> = {
+    "One-Shot": "Target a complete one-chapter arc.",
+    "Short Arc": "Target a compact 3-5 chapter arc with quick setup, escalation, reveal, and payoff.",
+    "Medium Arc": "Target roughly 6-10 chapters with clear midpoint pressure and a strong final payoff.",
+    "Long Arc": "Target roughly 11-16 chapters with multiple escalation turns before the climax.",
+    "Saga": "Target a large multi-phase arc with several sub-conflicts feeding one major payoff.",
+    "Season": "Target a season-length arc with opening, middle pressure, finale, and hook for the next arc.",
+    "Full Series": "Treat the structure as a full-series spine with major act breaks and long-term payoff.",
+    "Custom": "Use the user's custom arc length intent and keep chapter pacing consistent with it.",
+  };
+  return guides[length] || "";
+}
+
+/** Fill an LLM-returned arc-overview object with defaults and normalise
+ *  `arc_length_type` (the LLM sometimes returns it as `{ selected: "..." }`). */
+export function enrichArc(ao: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const src = ao || {};
+  return {
+    arc_title: "", arc_type: "", arc_number: 1,
+    arc_summary: "", starting_status_quo: "",
+    main_story_question: "", central_emotional_question: "",
+    main_external_conflict: "", main_internal_conflict: "",
+    main_relationship_conflict: "", main_threat_used: "",
+    minor_threats_used: [], main_factions_used: [],
+    main_characters_used: [], relationships_used: [],
+    ending_type_target: "", custom_arc_overview_details: "",
+    ...src,
+    arc_length_type: selectedOptionValue((src as Record<string, unknown>).arc_length_type ?? ""),
+  };
+}
+
 export function hasContent(value: any): boolean {
   if (value == null) return false;
   if (typeof value === "string") return value.trim().length > 0;

@@ -17,7 +17,7 @@ pip install -r requirements.txt
 cp .env.example .env
 
 # Run
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --port 8080   # port 8000 is taken locally; do NOT use --reload (serves stale bytecode on Windows)
 
 # Smoke test (73 checks — run after backend changes)
 python tests/smoke_test.py
@@ -35,7 +35,7 @@ npm run smoke       # node scripts/smoke-check.mjs
 
 ### Full stack
 ```bash
-docker compose up --build   # API :8000, Web :3000, Neo4j :7474, Qdrant :6333
+docker compose up --build   # Web :3000, API :8000 (in container), Neo4j :7474, Qdrant :6333
 ```
 
 ---

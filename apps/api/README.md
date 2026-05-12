@@ -1,13 +1,12 @@
-# Manga Maker Backend Foundation v1.3
+# Manga Maker Backend
 
-Backend foundation for the Manga Maker System story-state engine.
+FastAPI backend for the Manga Maker System story-state engine. Runs on **port 8080** (see [`../../RUN-COMMANDS.md`](../../RUN-COMMANDS.md)).
 
-## Services
+## Overview
 
-- FastAPI app (62 endpoints across 16 routers)
-- SQLite dev registry for smoke tests
-- PostgreSQL schema target in `infra/postgres/schema.sql`
-- 15 services: StoryService, MasterStoryService, CharacterService, PlotOutlineService, PlotWorkspaceService, EventPatchService, VersionService, ChapterScriptService, ContinuityService, GraphService, VectorService, LLMService, ValidationService, SnapshotService
+- FastAPI app — routers under `app/api/v1/`, services under `app/services/` (see those dirs for the current list rather than a count that drifts).
+- SQLite dev registry for local use / smoke tests; PostgreSQL via Alembic migrations (`migrations/`), schema also in `infra/postgres/schema.sql`.
+- Optional Neo4j (graph) and Qdrant (vector) integrations, each with a deterministic local fallback when the service isn't running.
 
 ### Official filenames
 

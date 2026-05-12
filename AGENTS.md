@@ -2,7 +2,9 @@
 
 ## Source of Truth
 
-**Always edit `integrated/manga_maker_integrated_v1_2/`**. The `backend/` and `frontend/` folders are legacy ZIP extracts — do not modify them.
+The only source trees are **`apps/api`** (FastAPI backend) and **`apps/web`** (Next.js frontend) at the repo root. There is no longer an `integrated/manga_maker_integrated_v1_2/` wrapper or any `backend/` / `frontend/` legacy ZIP extracts — if you see references to those in old notes, they're stale.
+
+Canonical reference docs: this file (agent runbook), `CLAUDE.md` (detailed dev guide), `RUN-COMMANDS.md` (run/troubleshoot), `WORKFLOW.md` (authoring workflow), `docs/` (architecture, guides, schema), `docs/REPO-CRITIQUE.md` (known issues + roadmap).
 
 ## Architecture at a Glance
 
@@ -29,7 +31,7 @@ Event-sourced story-state engine: users write freely, system detects consequence
 
 ```powershell
 # Backend
-cd integrated\manga_maker_integrated_v1_2\apps\api
+cd apps\api
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -37,7 +39,7 @@ copy .env.example .env
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080
 
 # Frontend (new terminal)
-cd integrated\manga_maker_integrated_v1_2\apps\web
+cd apps\web
 npm install
 copy .env.example .env.local   # already pre-configured for 8080
 npm run dev
@@ -49,7 +51,7 @@ npm run dev
 
 ## Docker Compose (Full Stack)
 
-From `integrated/manga_maker_integrated_v1_2/`:
+From ``:
 
 ```bash
 docker compose up --build    # API :8000 (in container), Web :3000, Neo4j :7474/:7687, Qdrant :6333

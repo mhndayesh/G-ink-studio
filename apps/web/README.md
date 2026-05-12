@@ -1,6 +1,6 @@
-# Manga Maker Frontend — Studio Flow v1.3
+# Manga Maker Frontend — Studio Flow
 
-This is the frontend for the Manga Maker System, designed around the backend story-state engine.
+This is the frontend for the Manga Maker System, designed around the backend story-state engine. Talks to the API on **port 8080** by default (`NEXT_PUBLIC_API_BASE_URL`).
 
 ## What this includes
 
@@ -12,21 +12,24 @@ This is the frontend for the Manga Maker System, designed around the backend sto
 - Lucide React (icons)
 - react-force-graph-2d (relationship graph)
 
-### 15 Screens (6 Stages)
+### Studio screens (6 stages)
+
+Authoritative list: the route folders under `app/studio/[storyId]/`. Roughly:
 
 - **Foundation**: Studio Home, Story Seed, World Core
-- **Characters**: Cast Forge (7-tab ProfileTabs, 150+ fields), Side Cast (auto-ID), Relationship Web (force-directed graph)
-- **Plot**: Plot Board (structure, arc, chapters), Scene Cards, Plot Threads (5 tabs)
+- **Characters**: Cast Forge (7-tab ProfileTabs, 150+ fields), Side Cast (auto-ID), Relationship Web (force-directed graph), Faction Visuals
+- **Plot**: Plot Board (structure, arc, chapters), Scene Cards, Plot Threads, Locations
 - **Write**: Writing Desk (free writing, AI expansion, priority, intent notes, protected sections), Consequence Court (Q&A, approve)
-- **Produce**: Manga Script Studio (edit mode, panels, dialogue, SFX)
+- **Produce**: Manga Script Studio (edit mode, panels, dialogue, SFX), Visuals Studio, Export
 - **Review**: Memory Timeline, Continuity Radar, Control Room
+- **Experimental**: Auto (one-shot LLM-driven flow — see `../../docs/SIMPLE-FLOW-PROPOSAL.md`)
 
 ## Backend expected
 
 Use Backend Foundation v1.3 or newer.
 
 ```env
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8080/api/v1
 NEXT_PUBLIC_MANGA_USER_ID=dev_user
 NEXT_PUBLIC_MANGA_API_KEY=
 ```

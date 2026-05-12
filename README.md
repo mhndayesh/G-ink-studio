@@ -36,7 +36,7 @@ The integrated bundle ships a SQLite-backed registry by default; PostgreSQL is s
 
 ## Six Official Story Files
 
-Canonical templates live at `integrated/manga_maker_integrated_v1_2/apps/api/app/templates/`.
+Canonical templates live at `apps/api/app/templates/`.
 
 | File | Purpose | Mutation path |
 |------|---------|---------------|
@@ -74,7 +74,7 @@ Every page that triggers an AI call also gates the AI button on its own prerequi
 
 ```powershell
 # Backend (FastAPI)
-cd integrated\manga_maker_integrated_v1_2\apps\api
+cd apps\api
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
@@ -85,7 +85,7 @@ copy .env.example .env
 
 ```powershell
 # Frontend (Next.js, new terminal)
-cd integrated\manga_maker_integrated_v1_2\apps\web
+cd apps\web
 npm install
 copy .env.example .env.local
 npm run dev
@@ -114,7 +114,7 @@ Any OpenAI-compatible endpoint works (LM Studio, llama.cpp, vLLM, OpenAI cloud).
 Without them the system runs in deterministic-fallback mode (graph kept in SQLite, vectors hashed locally). Bring them up only when you need real graph/vector behaviour:
 
 ```powershell
-cd integrated\manga_maker_integrated_v1_2\infra
+cd infra
 docker compose up -d
 ```
 
@@ -127,7 +127,7 @@ docker compose up -d
 ### Smoke test
 
 ```powershell
-cd integrated\manga_maker_integrated_v1_2\apps\api
+cd apps\api
 .\.venv\Scripts\python.exe tests\smoke_test.py
 ```
 
@@ -136,45 +136,43 @@ Expected: `"passed": true`.
 ## Repository Structure
 
 ```
-v2.1/
-├── README.md                        # This file
-├── AGENTS.md                        # Quick contributor + agent runbook (port 8080, gotchas)
-├── RUN-COMMANDS.md                  # Canonical run / troubleshooting commands
-├── progress                         # Chronological changelog
-├── .gitignore
-│
-├── docs/                            # Architecture and design docs
-│   ├── architecture.md
-│   ├── backend-guide.md             # Services + endpoints
-│   ├── frontend-guide.md            # Studio screens + components
-│   └── database-schema.md           # PostgreSQL tables, enums
-│
-├── integrated/                      # Canonical source of truth
-│   └── manga_maker_integrated_v1_2/
-│       ├── apps/api/                # FastAPI backend
-│       │   ├── app/                 # Routers, services, models, templates
-│       │   ├── scripts/             # One-shot maintenance scripts
-│       │   │                        # (e.g. backfill_relationship_ids.py)
-│       │   ├── tests/               # smoke_test.py
-│       │   └── requirements.txt
-│       ├── apps/web/                # Next.js frontend
-│       │   ├── app/studio/[storyId]/  # 16 studio screens
-│       │   ├── components/          # AiFillPanel, StudioShell, etc.
-│       │   ├── lib/                 # api.ts, phases.ts, store.ts, aiResults.ts
-│       │   └── package.json
-│       ├── docker-compose.yml
-│       ├── infra/                   # Neo4j + Qdrant compose
-│       ├── docs/                    # Bundle-local docs
-│       └── QA/                      # Test plan, bug report, perf notes
-│
-└── archive/                         # Historical artifacts (legacy zips, old audits, smoke reports)
+.
+├── README.md                  # This file — overview + quick start
+├── AGENTS.md                  # Contributor / agent runbook (port 8080, gotchas)
+├── CLAUDE.md                  # Detailed dev guide (architecture, services, conventions)
+├── RUN-COMMANDS.md            # Canonical run / troubleshooting commands
+├── WORKFLOW.md                # End-to-end authoring workflow
+├── CHANGELOG.md               # Notable changes
+├── docker-compose.yml         # Full stack (api + web + neo4j + qdrant)
+├── apps/
+│   ├── api/                   # FastAPI backend (port 8080)
+│   │   ├── app/               # routers (api/v1), services, models, core, templates
+│   │   ├── migrations/        # Alembic migrations
+│   │   ├── scripts/           # one-shot maintenance scripts (backfills)
+│   │   ├── tests/             # smoke_test.py
+│   │   ├── infra/postgres/    # schema.sql
+│   │   └── requirements.txt
+│   └── web/                   # Next.js frontend (port 3000)
+│       ├── app/studio/[storyId]/   # studio screens
+│       ├── components/        # AiFillPanel, StudioShell, ...
+│       ├── lib/               # api.ts, phases.ts, store.ts, aiResults.ts, ...
+│       └── package.json
+├── infra/                     # docker-compose for Neo4j + Qdrant only
+├── docs/                      # architecture, backend/frontend guides, db schema,
+│                              # ai-field-schema, ASSET-FORMAT-SPEC, EXPORT-TOOL-REQUIREMENTS,
+│                              # SIMPLE-FLOW-PROPOSAL, REPO-CRITIQUE
+└── QA/                        # test plan, bug report, perf notes, risky areas
 ```
+
+> Earlier revisions nested everything under `integrated/manga_maker_integrated_v1_2/`;
+> that layer has been removed. There are no separate `backend/` or `frontend/` legacy
+> folders any more — `apps/api` and `apps/web` are the only source trees.
 
 ## API Conventions
 
 - Base path: `/api/v1/`
 - All envelope responses: `{ "ok": true, "data": <payload>, "error": null }`
-- Errors raised as `MangaMakerError` are mapped to `{ ok: false, error: { code, message } }` by `manga_error_handler` ([core/errors.py](integrated/manga_maker_integrated_v1_2/apps/api/app/core/errors.py)).
+- Errors raised as `MangaMakerError` are mapped to `{ ok: false, error: { code, message } }` by `manga_error_handler` ([core/errors.py](apps/api/app/core/errors.py)).
 - Pydantic validation failures (422) return the same envelope with `error.code = "VALIDATION_ERROR"` and a human-readable summary plus the full detail array under `error.details`.
 - Auth: every request must carry `X-Manga-User-Id` (dev default: `dev_user`).
 
@@ -201,7 +199,16 @@ v2.1/
 | 7 — Graph + Vector | Neo4j projection, Qdrant chunks, continuity reports | Done |
 | 8 — Auth & Ownership | User ownership, API keys, story isolation | In progress |
 
-Detailed changelog: [`progress`](progress).
+Detailed changelog: [`CHANGELOG.md`](CHANGELOG.md).
+
+## Project status
+
+This is a **local, single-user development tool**, not a hardened multi-tenant
+service. In particular: auth is off by default and, when on, is a single shared
+API key mapped to one user (`dev_user`); the rate limiter is in-memory per-process;
+there is no multi-tenant story isolation beyond that. Don't expose the API to
+untrusted networks. See [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) for the
+full assessment and the cleanup roadmap.
 
 ## License
 

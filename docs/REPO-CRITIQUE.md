@@ -14,7 +14,7 @@ This is a working AI manga-story engine: FastAPI backend (~96 route handlers, 16
 
 ## 2. Directory structure & cruft
 
-**Nesting:** code lives at `integrated/manga_maker_integrated_v1_2/apps/{api,web}/...` — four directory levels (one of which hard-codes "v1_2" while the README *inside* it says "v1.3"). Flatten to `apps/api` + `apps/web` (or `backend/` + `frontend/`) at repo root.
+**Nesting:** code lives at `apps/{api,web}/...` — four directory levels (one of which hard-codes "v1_2" while the README *inside* it says "v1.3"). Flatten to `apps/api` + `apps/web` (or `backend/` + `frontend/`) at repo root.
 
 **Files/dirs that should not be here:**
 
@@ -94,7 +94,7 @@ Building both at once is *why* there's 50 uncommitted files and a half-built `au
 - `apps/api/docker-compose.yml` (duplicate); keep the integrated-root one + `infra/`.
 - One of the two `docs/` trees; one of the two `requirements.txt`.
 - `.agents/`, `.n8nac/`, `.github/agents/n8n-architect.agent.md` (unless n8n is genuinely part of this).
-- The `integrated/manga_maker_integrated_v1_2/` nesting layer.
+- The `` nesting layer.
 - Either the `auto/`+`autoPilot` experiment **or** several of the legacy studio screens (per §7) — not both.
 
 ## 9. Missing list (what should be added)

@@ -11,7 +11,7 @@ All commands are run from the repository root (`v2.1\`).
 ## 1. Infrastructure (Neo4j + Qdrant) — run once
 
 ```powershell
-cd integrated\manga_maker_integrated_v1_2\infra
+cd infra
 docker compose up -d
 ```
 
@@ -22,7 +22,7 @@ Wait ~20 s for Neo4j and Qdrant to become healthy.
 ## 2. Backend (FastAPI on port 8080)
 
 ```powershell
-cd integrated\manga_maker_integrated_v1_2\apps\api
+cd apps\api
 
 # First time only — create venv and install deps
 python -m venv .venv
@@ -49,7 +49,7 @@ Expected: `{'ok': True, 'data': {'status': 'ok'}, ...}`
 ## 3. Frontend (Next.js on port 3000) — new terminal
 
 ```powershell
-cd integrated\manga_maker_integrated_v1_2\apps\web
+cd apps\web
 
 # First time only
 npm install
@@ -72,7 +72,7 @@ Get-Process python, node -ErrorAction SilentlyContinue |
   Stop-Process -Force
 
 # Stop infrastructure containers
-cd integrated\manga_maker_integrated_v1_2\infra
+cd infra
 docker compose down
 ```
 
@@ -120,10 +120,10 @@ The fix is always a clean restart — do NOT use `--reload`:
 # Kill old process
 Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force
 # Clear bytecode cache
-Get-ChildItem -Path integrated\manga_maker_integrated_v1_2\apps\api -Recurse -Filter __pycache__ |
+Get-ChildItem -Path apps\api -Recurse -Filter __pycache__ |
   Remove-Item -Recurse -Force
 # Start fresh
-cd integrated\manga_maker_integrated_v1_2\apps\api
+cd apps\api
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080
 ```
 
@@ -146,12 +146,12 @@ always use the explicit path: `.\.venv\Scripts\python.exe -m uvicorn ...`
 
 | Concern | Path (from `v2.1\`) |
 |---------|----------------------|
-| Backend source | `integrated\manga_maker_integrated_v1_2\apps\api\app\` |
-| Frontend source | `integrated\manga_maker_integrated_v1_2\apps\web\` |
-| Story storage | `integrated\manga_maker_integrated_v1_2\apps\api\storage\stories\` |
-| SQLite registry | `integrated\manga_maker_integrated_v1_2\apps\api\storage\manga_registry.sqlite` |
-| Templates | `integrated\manga_maker_integrated_v1_2\apps\api\app\templates\` |
-| Infra docker-compose | `integrated\manga_maker_integrated_v1_2\infra\docker-compose.yml` |
+| Backend source | `apps\api\app\` |
+| Frontend source | `apps\web\` |
+| Story storage | `apps\api\storage\stories\` |
+| SQLite registry | `apps\api\storage\manga_registry.sqlite` |
+| Templates | `apps\api\app\templates\` |
+| Infra docker-compose | `infra\docker-compose.yml` |
 
 ---
 

@@ -10,6 +10,7 @@ from app.core.errors import MangaMakerError
 from app.repositories.sqlite_registry import SQLiteRegistry
 from app.services.snapshot_service import SnapshotService
 from app.services.validation_service import ValidationService
+from app.services.script_patch import apply_patch, get_value
 from app.services.content_inspector import (
     chapter_has_content,
     has_content,
@@ -1367,7 +1368,7 @@ class ChapterScriptService:
 
     def patch_script(self, *, story_id: str, target_branch: str, operation: str, value: Any = None) -> dict[str, Any]:
         record, data = self._editable(story_id)
-        old_value = self._apply_patch(data, target_branch, operation, value)
+        old_value = apply_patch(data, target_branch, operation, value)
         self._save(story_id, record, data)
         return {
             "story_id": story_id,
@@ -1375,7 +1376,7 @@ class ChapterScriptService:
             "target_branch": target_branch,
             "operation": operation,
             "old_value": old_value,
-            "updated_value": self._get_value(data, target_branch),
+            "updated_value": get_value(data, target_branch),
             "validation_status": "passed",
         }
 
@@ -1620,66 +1621,3 @@ class ChapterScriptService:
                 for line in panel.get("dialogue", []):
                     texts.append(line.get("text", ""))
         return texts
-
-    def _apply_patch(self, data: dict[str, Any], branch: str, op: str, value: Any) -> Any:
-        parent, key = self._resolve_parent(data, branch, create=op in {"add", "merge_object", "append_to_array"})
-        old = None
-        if isinstance(parent, list):
-            if not isinstance(key, int):
-                raise MangaMakerError("PATCH_TYPE_ERROR", "List parent requires numeric index")
-            if key >= len(parent):
-                if op == "add":
-                    parent.append(value); return None
-                raise MangaMakerError("PATCH_PATH_NOT_FOUND", f"Index out of range: {branch}")
-            old = copy.deepcopy(parent[key])
-            if op == "replace": parent[key] = value
-            elif op == "remove": parent.pop(key)
-            elif op == "merge_object":
-                if not isinstance(parent[key], dict) or not isinstance(value, dict): raise MangaMakerError("PATCH_TYPE_ERROR", "merge_object requires object")
-                parent[key].update(value)
-            elif op == "add": parent.insert(key, value)
-            else: raise MangaMakerError("UNSUPPORTED_PATCH_OPERATION", op)
-        else:
-            old = copy.deepcopy(parent.get(key))
-            if op == "replace":
-                if key not in parent: raise MangaMakerError("PATCH_PATH_NOT_FOUND", f"Path not found: {branch}")
-                parent[key] = value
-            elif op == "add": parent[key] = value
-            elif op == "remove": parent.pop(key, None)
-            elif op == "merge_object":
-                if key not in parent or parent[key] is None: parent[key] = {}
-                if not isinstance(parent[key], dict) or not isinstance(value, dict): raise MangaMakerError("PATCH_TYPE_ERROR", "merge_object requires object")
-                parent[key].update(value)
-            elif op == "append_to_array":
-                if key not in parent or parent[key] is None: parent[key] = []
-                if not isinstance(parent[key], list): raise MangaMakerError("PATCH_TYPE_ERROR", "append_to_array requires list")
-                parent[key].append(value)
-            else: raise MangaMakerError("UNSUPPORTED_PATCH_OPERATION", op)
-        return old
-
-    def _resolve_parent(self, data: dict[str, Any], branch: str, create: bool = False) -> tuple[Any, str | int]:
-        tokens = self._tokens(branch)
-        cur: Any = data
-        for token in tokens[:-1]:
-            if isinstance(token, int):
-                if not isinstance(cur, list) or token >= len(cur): raise MangaMakerError("PATCH_PATH_NOT_FOUND", branch)
-                cur = cur[token]
-            else:
-                if token not in cur:
-                    if create: cur[token] = {}
-                    else: raise MangaMakerError("PATCH_PATH_NOT_FOUND", branch)
-                cur = cur[token]
-        return cur, tokens[-1]
-
-    def _get_value(self, data: dict[str, Any], branch: str) -> Any:
-        cur: Any = data
-        for token in self._tokens(branch):
-            cur = cur[token] if isinstance(token, int) else cur.get(token)
-        return cur
-
-    def _tokens(self, branch: str) -> list[str | int]:
-        parts: list[str | int] = []
-        for raw in branch.replace("]", "").replace("[", ".").split("."):
-            if raw == "": continue
-            parts.append(int(raw) if raw.isdigit() else raw)
-        return parts

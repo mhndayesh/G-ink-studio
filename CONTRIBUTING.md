@@ -36,7 +36,8 @@ Run what CI runs (see `.github/workflows/ci.yml`):
   `tests/test_smoke.py` (the end-to-end workflow, in-process via TestClient — no
   server/Neo4j/Qdrant/LLM needed). `python tests/smoke_test.py` also still works
   standalone and prints a JSON report (`"passed": true` on success).
-- Frontend: `cd apps/web && npm run lint && npm run build && npm run smoke`.
+- Frontend: `cd apps/web && npm run lint && npm test && npm run build && npm run smoke`
+  (`npm test` = `vitest run`).
 
 ## Conventions
 

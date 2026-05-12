@@ -13,21 +13,10 @@ from app.core.config import Settings
 from uuid import uuid4
 from app.repositories.sqlite_registry import SQLiteRegistry
 from app.services.visual_prompt import STYLE_INSTRUCTION
+from app.services.llm_prompts import field_schema_hint
+from app.services.thread_ids import backfill_thread_ids, slugify_name, stable_rel_id_from_pair
 
 logger = logging.getLogger("manga.llm")
-
-
-# Stable relationship ID derived from "A / B" so plot_threads.relationship_threads
-# can reference an entry without the LLM needing to invent IDs.
-def _slugify_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_")
-
-
-def _stable_rel_id_from_pair(pair: str) -> str:
-    parts = [p.strip() for p in (pair or "").split("/") if p.strip()]
-    if len(parts) < 2:
-        return ""
-    return f"rel_{_slugify_name(parts[0])}__{_slugify_name(parts[1])}"
 
 
 @dataclass
@@ -463,75 +452,6 @@ class LLMService:
             return text[start : end + 1]
         return text
 
-    def _build_field_schema(self, page: str, target_fields: list[str]) -> str:
-        schemas: dict[str, dict[str, str]] = {
-            "cast": {
-                "status_role": "status{ selected(choose from status_options in partial_input), custom_status }, character_role_level{ selected(choose from role_options in partial_input), custom_character_role_level }",
-                "appearance": "selected_visual_style(choose from visual_style_options in partial_input), appearance_details{ age_range, gender_presentation, height, body_type, silhouette_shape, face_shape, skin_tone_or_markings, hair_style, hair_color, eye_shape, eye_color, distinctive_features[], scars_or_birthmarks[], clothing_style, main_outfit_description, alternate_outfits[], accessories[], weapons_or_tools_visible[], iconic_item, color_palette[], visual_symbol_or_motif, expression_style, pose_language, manga_panel_presence, first_impression_visual, how_design_reflects_personality, how_design_reflects_backstory, how_design_reflects_power_or_role, ai_image_prompt_notes, negative_prompt_notes }",
-                "faction": "selected(choose from faction_alignment_options in partial_input), custom_alignment_type, alignment_details{ linked_master_faction, character_role_in_faction, loyalty_level, reason_for_following_this_side, what_the_faction_wants_from_character, what_character_wants_from_faction, conflict_with_faction, can_change_sides, side_change_trigger, hidden_allegiance, public_allegiance }",
-                "backstory": "selected_backstory_type(choose from backstory_type_options), selected_mental_state(choose from mental_state_options), selected_community_place(choose from community_place_options), backstory_details{ birthplace, family_situation, childhood_summary, important_past_event, past_trauma_or_wound, past_failure, past_success, secret_from_past, what_the_character_lost, what_the_character_gained, how_backstory_connects_to_master_world, how_backstory_connects_to_master_factions, how_backstory_connects_to_major_threat }, mental_state_details{ current_emotional_state, main_fear, main_desire, inner_need, outer_goal, biggest_strength, biggest_flaw, fatal_flaw, emotional_wound, coping_mechanism }, community_place_details{ community_name, social_class, public_reputation, how_people_treat_them, responsibilities_in_community, desired_new_status }",
-                "personality": "selected_personality_types[](choose 2-5 from personality_type_options), personality_details{ core_traits[], positive_traits[], negative_traits[], public_personality, private_personality, true_self, behavior_when_safe, behavior_when_threatened, behavior_under_pressure, speech_style, humor_style, habit_or_quirk, biggest_personality_flaw, personality_contradiction, personality_change_arc }",
-                "powers": "is_enabled(bool), selected_power_origin(choose from power_origin_options), selected_power_type(choose from power_type_options), selected_power_level(choose from power_level_options), power_details{ power_name, power_description, how_power_manifests, visual_style_when_used, main_abilities[], ultimate_ability, power_source, power_cost, power_limitations, weaknesses[], control_level, growth_potential, risk_to_user, how_power_connects_to_backstory, how_power_connects_to_faction, how_power_connects_to_major_threat }",
-                "arc": "selected_arc_type(choose from arc_type_options), arc_details{ starting_belief, false_belief_or_lie, truth_they_must_learn, personal_goal, main_internal_conflict, main_external_conflict, what_forces_them_to_change, lowest_point, turning_point, final_state }, threat_connection_details{ linked_major_threat, why_character_cares_about_threat, how_major_threat_blocks_character_goal, how_character_can_damage_or_stop_threat, how_threat_can_break_character, personal_stakes_if_threat_wins, final_conflict_role }",
-            },
-            "side": {
-                "status_role": "character_role_level{ selected(choose from role_options in partial_input), custom_character_role_level }, status{ selected(choose from status_options in partial_input), custom_status }",
-                "appearance": "appearance_and_visual_design{ selected_visual_style(choose from visual_style_options), appearance_details{ age_range, gender_presentation, height, body_type, hair_style, hair_color, eye_color, clothing_style, main_outfit_description, ai_image_prompt_notes, negative_prompt_notes } }",
-                "faction": "main_character_faction_alignment{ selected(choose from faction_alignment_options), custom_alignment_type, alignment_details{ linked_master_faction, character_role_in_faction, loyalty_level, reason_for_following_this_side } }",
-                "backstory": "character_backstory_mental_state_and_community_place{ selected_backstory_type(choose from backstory_type_options), selected_mental_state(choose from mental_state_options), selected_community_place(choose from community_place_options), backstory_details{ birthplace, family_situation, childhood_summary, important_past_event, past_trauma_or_wound, how_backstory_connects_to_master_world }, mental_state_details{ main_fear, main_desire, biggest_flaw } }",
-                "personality": "character_personality{ selected_personality_types[](choose 2-4 from personality_type_options), personality_details{ public_personality, speech_style, habit_or_quirk } }",
-            },
-            "board": {
-                "arc_overview": "arc_title, arc_number(int), arc_type, arc_length_type(plain string, one of: One-Shot/Short Arc/Medium Arc/Long Arc/Saga/Season/Full Series/Custom), arc_summary, starting_status_quo, main_story_question, central_emotional_question, main_external_conflict, main_internal_conflict, main_relationship_conflict, main_threat_used, minor_threats_used[](use names from context), main_factions_used[](use names from context), main_characters_used[](use names from context), relationships_used[](use IDs from context), ending_type_target, custom_arc_overview_details",
-                "chapters": "array of objects [{ chapter_id(use ch_NNN format like ch_001), chapter_number(int, sequential), arc_title(use arc_title from context to link chapter to its arc), chapter_title, chapter_purpose, structure_section(use one valid tag: ki_introduction/sho_development/ten_twist_or_turn/ketsu_conclusion/act_1_setup/act_2_escalation/act_3_climax_resolution/mystery_setup/clue_investigation/escalation_pressure/major_reveal/confrontation_payoff), summary, main_conflict, emotional_beat, twist_or_hook, ending_cliffhanger, characters_present[](string[] use character names from context), factions_used[](string[] use faction names from context), threats_used[](string[] use threat names from context), relationships_used[](string[] use relationship IDs from context), world_rules_shown[](string[]), power_system_shown[](string[]), custom_chapter_details }]",
-                "structure": "For Kishotenketsu: kishotenketsu_outline{ ki_introduction{ initial_mystery_or_question, opening_image, chapter_range }, sho_development{ tension_growth, chapter_range }, ten_twist_or_turn{ main_twist, hidden_truth_revealed, major_threat_recontextualized, relationship_reversal, character_arc_turning_point, chapter_range }, ketsu_conclusion{ conflict_resolution, emotional_resolution, relationship_resolution, world_state_after_arc, character_final_state, chapter_range } }. For Three-Act/Hero's Journey: conflict_driven_outline{ act_1_setup{ opening_hook, normal_world, inciting_incident, first_major_choice, main_goal_locked, chapter_range }, act_2_escalation{ midpoint_reveal_or_defeat, stakes_increase, chapter_range }, act_3_climax_resolution{ darkest_moment, final_plan_or_breakthrough, climax_battle_or_confrontation, major_threat_outcome, character_arc_payoff, relationship_payoff, ending_image, chapter_range } }. For Mystery Arc, plan chapters using these structure_section tags in order: mystery_setup, clue_investigation, escalation_pressure, major_reveal, confrontation_payoff.",
-            },
-            "scenes": {
-                "scenes_for_chapter": "array of objects [{ scene_id, chapter_id(use context chapter IDs), scene_order(int), location(MUST be the exact name string from context.locations[].name — pick whichever location fits this scene best; never invent a new name), time(one of: Dawn/Morning/Afternoon/Evening/Night/Midnight), characters_present[](use character names from context), scene_goal, scene_conflict, relationship_dynamic_used, new_information_revealed, action_or_dialogue_focus, visual_manga_moment, panel_mood, ending_beat, custom_scene_details }]",
-                "scene_count_recommendations": "array of objects [{ chapter_id(use context chapter IDs), chapter_number(int), chapter_title, current_scene_count(int), recommended_scene_count(int between 1 and 8), reason, must_cover_beats[](array of objects, each: { beat(string — what happens in this scene), location(exact name from context.locations[].name — pick the most fitting location for this beat), time(one of: Dawn/Morning/Afternoon/Evening/Night/Midnight) }) }]",
-            },
-            "threads": {
-                "main": "goal, obstacles[](string[]), turning_points[](string[]), resolution",
-                "character_arcs": "array [{ character_id(use IDs from context), starting_state, growth_beats[](string[]), lowest_point, final_state }]",
-                "relationships": "array [{ relationship_id(use IDs from context), start_dynamic, change_beats[](string[]), breaking_point, final_dynamic }]",
-                "threats": "array [{ threat_id_or_name(use names from context), first_hint, escalation_beats[](string[]), reveal, final_outcome }]",
-                "powers": "array [{ character_id(use IDs from context), power_name, first_use, training_or_failure_beats[](string[]), breakthrough, cost_or_consequence }]",
-            },
-            "world": {
-                "world_core_details": (
-                    "object with optional custom_world_type, custom_rules, custom_factions, custom_threats, "
-                    "rule_details{ magic_rules, power_rules, demon_rules, monster_rules, god_rules, technology_rules, "
-                    "race_species_rules, realm_dimension_rules, forbidden_rules, power_limits, custom_rule_details }, "
-                    "faction_details keyed by selected faction slug, each { main_ruling_side, opposing_side, neutral_side, hidden_side, ruling_side_details, conflict_map }, "
-                    "threat_details{ main_threat_source, main_threat_goal, main_threat_target, stakes_if_major_threat_wins, time_limit, hidden_truth_behind_threat }. "
-                    "Only fill fields relevant to the user's selected options in partial_input. Do not change selections."
-                ),
-            },
-            "locations": {
-                "name": "evocative location name that fits the story world and genre",
-                "type": "location category (e.g. Interior/Residential, Exterior/Urban, Forest, Dungeon, Market, School, Rooftop, Underground)",
-                "description": "rich visual description: lighting mood, dominant colors, textures, atmosphere, key props, time of day feel, story significance",
-                "positive_prompt": "SHORT comma-separated list of what is drawn in this place — environment type, key structural / architectural / natural details, props, light-vs-shadow words (e.g. 'deep shadows', 'high contrast'). " + STYLE_INSTRUCTION,
-                "negative_prompt": "comma-separated exclusion terms, e.g.: people, characters, text, watermark, blurry, low quality, nsfw",
-                "locations": (
-                    "array of 5-8 location objects covering key story settings — each: "
-                    "{ name, type, description(visual prose), "
-                    "positive_prompt(SHORT comma-separated list of drawn details — environment, structure, props, light/shadow words; no colour names, no 'cinematic'/'atmospheric', no style word), "
-                    "negative_prompt(short exclusion list) }. "
-                    "Base locations on chapters, world rules, factions, and character home/work places from context. "
-                    "Avoid duplicating any locations already in context.locations[]."
-                ),
-            },
-        }
-        page_schema = schemas.get(page, {})
-        matched: list[str] = []
-        for tf in target_fields:
-            if tf in page_schema:
-                matched.append(f"  - {tf}: {page_schema[tf]}")
-        if not matched:
-            return ""
-        return "\nREQUIRED sub-fields — fill EVERY one of these for each target field. Do not omit any:\n" + "\n".join(matched)
-
     def _build_scene_fallback(
         self,
         *,
@@ -749,7 +669,7 @@ class LLMService:
                     "major": [{"id": p.get("profile_id", ""), "name": p.get("character_name", "")} for p in major_profiles[:12]],
                     "relationships": [
                         {
-                            "id": r.get("relationship_id", "") or _stable_rel_id_from_pair(r.get("characters_involved", "")),
+                            "id": r.get("relationship_id", "") or stable_rel_id_from_pair(r.get("characters_involved", "")),
                             "characters": self._clip_text(r.get("characters_involved", ""), 80),
                             "type": self._clip_text(r.get("relationship_change_type", ""), 80),
                         }
@@ -1187,7 +1107,7 @@ class LLMService:
             for r in char_data.get("character_relationship_map", {}).get("relationships", []):
                 pair = r.get("characters_involved", "")
                 curated_rels.append({
-                    "relationship_id": r.get("relationship_id") or _stable_rel_id_from_pair(pair),
+                    "relationship_id": r.get("relationship_id") or stable_rel_id_from_pair(pair),
                     "characters_involved": pair,
                     "type": r.get("relationship_change_type", ""),
                 })
@@ -1419,7 +1339,7 @@ class LLMService:
                 constraints_msg += f"  Do NOT change: {user_constraints['do_not_change_these_parts']}\n"
             if user_constraints.get("user_priority"):
                 constraints_msg += f"  Priority: {user_constraints['user_priority']}\n"
-        schema_hint = self._build_field_schema(page, target_fields)
+        schema_hint = field_schema_hint(page, target_fields)
         compact_context = self._compact_generation_context(
             page=page,
             context=context,
@@ -1459,7 +1379,7 @@ class LLMService:
         if page == "scenes" and "scene_count_recommendations" in target_fields and not generated.get("scene_count_recommendations"):
             warnings = [*warnings, "AI returned no scene-count recommendations. Retry in a minute or fill manually."]
         if page == "threads":
-            generated = self._backfill_thread_ids(generated=generated, context=context)
+            generated = backfill_thread_ids(generated=generated, context=context)
         return {"generated": generated, "generated_fields": generated, "warnings": warnings, "used_fallback": result.used_fallback}
 
     # ── Batch panel fill ──────────────────────────────────────────────────────
@@ -1602,130 +1522,6 @@ class LLMService:
             "warnings": out.get("warnings", []),
             "used_fallback": result.used_fallback,
         }
-
-    def _backfill_thread_ids(self, *, generated: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        """Ensure plot_threads items carry stable IDs even when the LLM omits them.
-
-        The frontend's per-tab save (saveItemListThreads) silently drops items
-        whose id-field is empty, so a missing relationship_id / character_id /
-        threat_id_or_name = lost work. Fill them here from saved characters.json
-        and master_story.json by matching on names found in the item's text.
-        """
-        chars_data = context.get("characters", {}) if isinstance(context, dict) else {}
-        ms_data = context.get("master_story", {}) if isinstance(context, dict) else {}
-
-        # Build lookups: lowercase name → id, plus relationship slug → id.
-        major_profiles = chars_data.get("created_major_character_profiles", []) or []
-        char_by_name: dict[str, str] = {}
-        for p in major_profiles:
-            name = (p.get("character_name") or "").strip().lower()
-            cid = p.get("profile_id") or p.get("character_name") or ""
-            if name and cid:
-                char_by_name[name] = cid
-
-        rel_lookup: list[dict[str, str]] = []
-        for r in chars_data.get("character_relationship_map", {}).get("relationships", []) or []:
-            if not isinstance(r, dict):
-                continue
-            pair = r.get("characters_involved", "") or ""
-            parts = [p.strip() for p in pair.split("/") if p.strip()]
-            if len(parts) < 2:
-                continue
-            rid = r.get("relationship_id") or _stable_rel_id_from_pair(pair)
-            if not rid:
-                continue
-            rel_lookup.append({"id": rid, "a": parts[0].lower(), "b": parts[1].lower(), "pair": pair})
-
-        threats: list[str] = []
-        threats_block = ms_data.get("major_threats_and_minor_side_threats", {}) if isinstance(ms_data, dict) else {}
-        if threats_block.get("major_threat"):
-            threats.append(str(threats_block["major_threat"]))
-        threats.extend([str(t) for t in threats_block.get("minor_side_threats", []) if t])
-
-        def _flatten(*values: Any) -> str:
-            buf: list[str] = []
-            for v in values:
-                if isinstance(v, str):
-                    buf.append(v)
-                elif isinstance(v, list):
-                    buf.extend(str(x) for x in v if x)
-                elif v is not None:
-                    buf.append(str(v))
-            return " ".join(buf).lower()
-
-        def _find_char_id(blob: str) -> str:
-            for name, cid in char_by_name.items():
-                if name and name in blob:
-                    return cid
-            return ""
-
-        def _find_rel_id(blob: str, hint_pair: str = "") -> str:
-            if hint_pair:
-                hp = _stable_rel_id_from_pair(hint_pair)
-                if hp:
-                    return hp
-            for r in rel_lookup:
-                if r["a"] in blob and r["b"] in blob:
-                    return r["id"]
-            return ""
-
-        def _find_threat(blob: str) -> str:
-            for t in threats:
-                if t and t.lower() in blob:
-                    return t
-            return ""
-
-        # Relationship threads
-        rels = generated.get("relationship_threads") or generated.get("relationships")
-        if isinstance(rels, list):
-            for item in rels:
-                if not isinstance(item, dict) or item.get("relationship_id"):
-                    continue
-                hint_pair = item.get("characters_involved") or ""
-                if not hint_pair:
-                    a = item.get("from") or item.get("character_a") or ""
-                    b = item.get("to") or item.get("character_b") or ""
-                    if a and b:
-                        hint_pair = f"{a}/{b}"
-                blob = _flatten(item.get("start_dynamic"), item.get("breaking_point"), item.get("final_dynamic"), item.get("change_beats"), hint_pair)
-                rid = _find_rel_id(blob, hint_pair)
-                if rid:
-                    item["relationship_id"] = rid
-
-        # Character arc threads
-        char_arcs = generated.get("character_arc_threads") or generated.get("character_arcs")
-        if isinstance(char_arcs, list):
-            for item in char_arcs:
-                if not isinstance(item, dict) or item.get("character_id"):
-                    continue
-                blob = _flatten(item.get("starting_state"), item.get("lowest_point"), item.get("final_state"), item.get("growth_beats"))
-                cid = _find_char_id(blob)
-                if cid:
-                    item["character_id"] = cid
-
-        # Threat threads
-        threat_arr = generated.get("threat_threads") or generated.get("threats")
-        if isinstance(threat_arr, list):
-            for item in threat_arr:
-                if not isinstance(item, dict) or item.get("threat_id_or_name"):
-                    continue
-                blob = _flatten(item.get("first_hint"), item.get("reveal"), item.get("final_outcome"), item.get("escalation_beats"))
-                t = _find_threat(blob)
-                if t:
-                    item["threat_id_or_name"] = t
-
-        # Power threads
-        powers = generated.get("power_threads") or generated.get("powers")
-        if isinstance(powers, list):
-            for item in powers:
-                if not isinstance(item, dict) or item.get("character_id"):
-                    continue
-                blob = _flatten(item.get("power_name"), item.get("first_use"), item.get("breakthrough"), item.get("cost_or_consequence"), item.get("training_or_failure_beats"))
-                cid = _find_char_id(blob)
-                if cid:
-                    item["character_id"] = cid
-
-        return generated
 
     def analyze_relationships(self, *, story_id: str, chapter_ids: list[str] | None = None) -> dict[str, Any]:
         """Analyze story chapters and arcs to propose relationship map updates."""

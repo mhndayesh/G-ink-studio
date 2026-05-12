@@ -6,6 +6,15 @@ This is a working AI manga-story engine: FastAPI backend (~96 route handlers, 16
 
 ---
 
+## Cleanup status (branch `cleanup/repo-hygiene`)
+
+Much of this has been actioned on the `cleanup/repo-hygiene` branch — see [`../CHANGELOG.md`](../CHANGELOG.md). In short:
+
+- **Done:** repo flattened (`integrated/manga_maker_integrated_v1_2/` removed), cruft deleted (`archive/`, `.agents/`, `.n8nac/`, stray DBs, duplicate compose/requirements), working tree committed, `package-lock.json` committed; docs reconciled (paths, the `uvicorn --reload`/port-8000 contradiction, drifted counts) + a "Project status — local single-user tool" notice; `.github/workflows/ci.yml` added (lint + build + `pytest`); `CHANGELOG.md`/`CONTRIBUTING.md` added; the visual-prompt policy (one fixed `black and white Japanese manga style` prefix, short visual-only sanitiser) + BUNDLE-AUDIT items #1–#6 and #8 mitigated at the export layer + LLM-schema level; **four god modules decomposed** (`export.py` 1689→265 +`export_service.py`; `llm_service.py` 1894→1690 +`thread_ids.py`/`llm_prompts.py`; `chapter_script_service.py` 1783→1623 +`script_patch.py`; shared content predicates +`content_inspector.py`); a **36-test `pytest` suite** added; a first frontend extraction (`board/page.tsx` 1295→1226 +`boardModel.ts`).
+- **Still TODO** (left deliberately — each needs care this branch couldn't safely take): finish decomposing `generate_fields` in `llm_service.py` (~620 lines) and the per-section sub-form state in `board/page.tsx`; replace the frontend's pervasive `any` with typed API responses; converge the three non-identical `_apply_patch` copies onto `script_patch.py`; BUNDLE-AUDIT #7 (canonical character spelling across id/display/dialogue/prose); decide the staged-studio-vs-`auto`-flow product question; broaden the test suite (more service coverage; frontend component tests once a test runner is added). The frontend changes need `npm run lint && npm run build` to verify — not runnable in the cleanup worktree.
+
+---
+
 ## 1. Git hygiene — the biggest single problem
 
 - **One commit ("Initial project import") and ~50 uncommitted changes** (32 modified tracked files + ~20 untracked new files/dirs, including whole new features). There is no history, no ability to review changes, no bisect, no traceability. Commit the working tree in logical chunks now, and don't let it pile up again.

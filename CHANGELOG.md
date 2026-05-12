@@ -22,7 +22,7 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
   note for 3+ (#3); character & location AI prompts rebuilt clean (#4/#6); object-only
   panels drop the "Expression: N/A …" line (#8); `export/validate` flags source prompts
   that still carry colour/lighting/style noise.
-- **Refactors** (all behavior-preserving, smoke-test verified):
+- **Refactors** (all behavior-preserving; backend ones smoke-test + unit-test verified):
   - `apps/api/app/api/v1/export.py` (~1690-line router) → router (~265 lines) +
     `apps/api/app/services/export_service.py` (the ~45 rendering helpers).
   - Shared "is this chapter/scene/page non-empty?" predicates (duplicated in
@@ -34,6 +34,13 @@ Repo-hygiene pass acting on [`docs/REPO-CRITIQUE.md`](docs/REPO-CRITIQUE.md) and
     `apps/api/app/services/script_patch.py`. (`master_story_service.py` and
     `plot_outline_service.py` have their own *non-identical* `_apply_patch` copies —
     converging those is a follow-up.)
+  - `apps/web/app/studio/[storyId]/board/page.tsx` (1295→1226): React-free constants
+    + helpers → `./boardModel.ts`. (Deeper split of the per-section sub-form state and
+    the `any` cleanup still TODO.)
+- **Tests:** added a `pytest` suite (`apps/api/tests/`) — `pyproject.toml` config,
+  unit tests for `visual_prompt`, `content_inspector`, `script_patch`, `thread_ids`,
+  and `export_service` helpers, plus `tests/test_smoke.py` running the e2e workflow
+  under pytest. `36 passed`. CI backend job now runs `python -m pytest`.
 
 Other changes in this branch are below; none change backend/frontend behavior
 unless noted.

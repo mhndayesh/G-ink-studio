@@ -26,6 +26,25 @@ First build takes 3–5 minutes (Next.js compiles). Subsequent starts are under 
 
 ---
 
+## Screenshots
+
+<table>
+<tr>
+<td><img src="screenshots/03-studio-home.png" alt="Studio Home — stage dashboard"/><br/><sub><b>Studio Home</b> — all 6 stages, live backend status</sub></td>
+<td><img src="screenshots/04-cast-forge.png" alt="Cast Forge — character builder"/><br/><sub><b>Cast Forge</b> — character structure + profile queue</sub></td>
+</tr>
+<tr>
+<td><img src="screenshots/05-side-cast.png" alt="Side Cast — supporting characters"/><br/><sub><b>Side Cast</b> — auto-generate, role badges, story fate</sub></td>
+<td><img src="screenshots/06-relationship-web.png" alt="Relationship Web — force graph"/><br/><sub><b>Relationship Web</b> — live force-directed character graph</sub></td>
+</tr>
+<tr>
+<td><img src="screenshots/08-plot-board.png" alt="Plot Board — arc and chapters"/><br/><sub><b>Plot Board</b> — narrative structure, arc overview, chapters</sub></td>
+<td><img src="screenshots/12-scene-cards-nav.png" alt="Scene Cards"/><br/><sub><b>Scene Cards</b> — scenes grouped by chapter with AI assist</sub></td>
+</tr>
+</table>
+
+---
+
 ## What makes it different
 
 Most AI writing tools give you a chat box. G-Ink Studio gives you a structured pipeline:

@@ -19,6 +19,17 @@ def _character_reference_lines(characters: dict) -> list[str]:
     profiles = (characters.get("created_major_character_profiles", []) or []) + (characters.get("created_side_character_profiles", []) or [])
     if not profiles:
         return lines
+    # Build a name→appearance fallback so side profiles that share a name with a
+    # major character (or another side profile) inherit their appearance when empty.
+    _appearance_by_name: dict[str, dict] = {}
+    for _p in profiles:
+        if not isinstance(_p, dict):
+            continue
+        _n = _safe(_p.get("character_name")).lower()
+        if _n and not _appearance_by_name.get(_n):
+            _det = _appearance_block(_p)
+            if _det:
+                _appearance_by_name[_n] = _det
     lines += ["CHARACTER REFERENCE SHEETS", "=" * 26, ""]
     for profile in profiles:
         if not isinstance(profile, dict):
@@ -31,7 +42,7 @@ def _character_reference_lines(characters: dict) -> list[str]:
         role = _profile_role(profile)
         header = name + (f" - {role}" if role else "")
         lines += [header, "-" * len(header)]
-        details = _appearance_block(profile)
+        details = _appearance_block(profile) or _appearance_by_name.get(name, {})
         for key, label in [
             ("age_range", "Age"),
             ("gender_presentation", "Gender presentation"),
@@ -183,13 +194,22 @@ def _ai_prompt_files(characters: dict) -> dict[str, str]:
     """One file per character holding a clean, B&W-manga AI image prompt (positive + negative)."""
     out: dict[str, str] = {}
     profiles = (characters.get("created_major_character_profiles", []) or []) + (characters.get("created_side_character_profiles", []) or [])
+    _appearance_by_name: dict[str, dict] = {}
+    for _p in profiles:
+        if not isinstance(_p, dict):
+            continue
+        _n = _safe(_p.get("character_name")).lower()
+        if _n and not _appearance_by_name.get(_n):
+            _det = _appearance_block(_p)
+            if _det:
+                _appearance_by_name[_n] = _det
     for p in profiles:
         if not isinstance(p, dict):
             continue
         name = _safe(p.get("character_name"))
         if not name:
             continue
-        details = _appearance_block(p)
+        details = _appearance_block(p) or _appearance_by_name.get(name.lower(), {})
         phrases = _character_visual_phrases(details, p)
         pos = compile_visual_prompt(", ".join(phrases))
         neg = negative_prompt(details.get("negative_prompt_notes"))
@@ -203,13 +223,22 @@ def _character_sheet_files(characters: dict) -> dict[str, str]:
     """One Markdown file per character with their full visual sheet."""
     out: dict[str, str] = {}
     profiles = (characters.get("created_major_character_profiles", []) or []) + (characters.get("created_side_character_profiles", []) or [])
+    _appearance_by_name: dict[str, dict] = {}
+    for _p in profiles:
+        if not isinstance(_p, dict):
+            continue
+        _n = _safe(_p.get("character_name")).lower()
+        if _n and not _appearance_by_name.get(_n):
+            _det = _appearance_block(_p)
+            if _det:
+                _appearance_by_name[_n] = _det
     for p in profiles:
         if not isinstance(p, dict):
             continue
         name = _safe(p.get("character_name"))
         if not name:
             continue
-        details = _appearance_block(p)
+        details = _appearance_block(p) or _appearance_by_name.get(name.lower(), {})
         if not details:
             continue
         safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name).strip().replace(" ", "_") or "character"

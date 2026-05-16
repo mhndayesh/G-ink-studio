@@ -101,8 +101,11 @@ _DROP_IF_CONTAINS_WORD = frozenset({
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’-]*")
 _SPLIT_RE = re.compile(r"[,;\n.|]+|\s+and\s+|\s+with\s+")
-_MAX_PHRASES = 36
-_MAX_CHARS = 320
+# Audit fix #3 (full): no truncation on fields that feed the AI pipeline.
+# Dedup + colour/lighting/style sanitisation still runs; we just don't drop
+# tail content. Values kept (large) so any callers/tests that read them work.
+_MAX_PHRASES = 10_000
+_MAX_CHARS = 1_000_000
 
 # Filler words a colour-stripped phrase can be left as — if that's all that
 # remains, the phrase carried no real visual content.
@@ -147,7 +150,7 @@ def sanitize_visual_prompt(text: object) -> str:
 
     Splits on commas / semicolons / line breaks / sentence stops / "and"/"with",
     drops phrases that carry colour, lighting, render-quality or style noise,
-    de-duplicates (case-insensitively, order-preserving) and caps the length.
+    de-duplicates (case-insensitively, order-preserving). No length cap (audit #3).
     Returns "" when nothing usable survives.
     """
     if not text:
@@ -168,10 +171,7 @@ def sanitize_visual_prompt(text: object) -> str:
         out.append(phrase)
         if len(out) >= _MAX_PHRASES:
             break
-    joined = ", ".join(out)
-    if len(joined) > _MAX_CHARS:
-        joined = joined[:_MAX_CHARS].rsplit(",", 1)[0].strip()
-    return joined
+    return ", ".join(out)
 
 
 def compile_visual_prompt(*parts: object) -> str:

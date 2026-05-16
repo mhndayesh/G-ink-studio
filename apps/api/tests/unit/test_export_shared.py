@@ -30,7 +30,10 @@ def test_text_list_pulls_names_from_strings_and_dicts():
     assert sh._text_list(["a", " b ", ""]) == ["a", "b"]
     assert sh._text_list([{"name": "Kinji"}, {"title": "Ch 1"}, {"label": "x"}]) == ["Kinji", "Ch 1", "x"]
     assert sh._text_list([{"character_name": "Hina"}, {}]) == ["Hina"]  # empty dict yields nothing
-    assert sh._text_list("not a list") == []
+    # Audit fix #4: a single string is treated as a one-item list (was silently dropped before)
+    assert sh._text_list("permanent dark circles") == ["permanent dark circles"]
+    assert sh._text_list("") == []
+    assert sh._text_list("   ") == []
 
 
 def test_append_field_only_appends_when_non_empty():

@@ -9,7 +9,7 @@ _profile_role / _profile_bio helpers. Pure logic. Driven by app/api/v1/export.py
 import csv
 import io
 
-from app.services.export_shared import _appearance_block, _as_list, _safe, _selected, _text_list
+from app.services.export_shared import _appearance_block, _as_list, _build_scene_by_id, _safe, _selected, _text_list
 from app.services.visual_prompt import STYLE_PREFIX, canonical_camera_shot, compile_visual_prompt, negative_prompt, sanitize_visual_prompt
 
 
@@ -78,9 +78,15 @@ def _character_reference_lines(characters: dict) -> list[str]:
         lines.append("")
     return lines
 
-def _panels_csv(scripts: list[dict]) -> str:
-    """Per-panel CSV for spreadsheet workflows. One row per panel across all chapters."""
+def _panels_csv(scripts: list[dict], plot_outline: dict | None = None) -> str:
+    """Per-panel CSV for spreadsheet workflows. One row per panel across all chapters.
+
+    When ``plot_outline`` is provided, the ``lighting`` column falls back to the
+    scene's ``time`` value (Night/Morning/Afternoon/Evening) when a panel has no
+    explicit lighting set — audit item #7.
+    """
     import csv
+    scenes_by_id = _build_scene_by_id(plot_outline or {})
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
@@ -89,6 +95,7 @@ def _panels_csv(scripts: list[dict]) -> str:
         "panel_number", "panel_id", "panel_size", "camera_shot", "pacing",
         "visual", "character_action", "background_details",
         "facial_expression", "pose_or_body_language", "mood",
+        "characters_in_panel", "lighting",
         "narration", "dialogue_count", "sfx_text",
         "continuity_notes",
     ])
@@ -103,6 +110,7 @@ def _panels_csv(scripts: list[dict]) -> str:
             page_num = _safe(page.get("page_number"))
             page_id = _safe(page.get("page_id"))
             scene_id = _safe(page.get("scene_id"))
+            scene_time = _safe((scenes_by_id.get(scene_id) or {}).get("time")) if scene_id else ""
             for panel in _as_list(page.get("panels")):
                 if not isinstance(panel, dict):
                     continue
@@ -119,6 +127,9 @@ def _panels_csv(scripts: list[dict]) -> str:
                 expr = _safe(panel.get("facial_expression"))
                 if expr.strip().lower().startswith(("n/a", "none", "not applicable")):
                     expr = ""
+                chars_in_panel = _as_list(panel.get("characters_in_panel"))
+                chars_cell = "; ".join(_safe(c) for c in chars_in_panel if _safe(c))
+                lighting_cell = _safe(panel.get("lighting")) or scene_time
                 writer.writerow([
                     ch_num, ch_id, ch_title,
                     page_num, page_id, scene_id,
@@ -133,6 +144,8 @@ def _panels_csv(scripts: list[dict]) -> str:
                     expr,
                     _safe(panel.get("pose_or_body_language")),
                     _safe(panel.get("mood")),
+                    chars_cell,
+                    lighting_cell,
                     _safe(panel.get("narration")),
                     len(_as_list(panel.get("dialogue"))),
                     sfx_text,
@@ -151,6 +164,9 @@ def _character_visual_phrases(details: dict, profile: dict | None = None) -> lis
         parts.append(details.get(key))
     for key in ("distinctive_features", "scars_or_birthmarks", "accessories", "weapons_or_tools_visible"):
         parts.extend(_text_list(details.get(key, [])))
+    # Audit fix #4: identity-anchoring fields so generated panels stay recognisable across shots
+    for key in ("expression_style", "pose_language", "manga_panel_presence"):
+        parts.append(details.get(key))
     # the LLM-written notes go last so the structured fields anchor the prompt
     parts.append(details.get("ai_image_prompt_notes"))
     phrases: list[str] = []
@@ -203,6 +219,7 @@ def _character_sheet_files(characters: dict) -> dict[str, str]:
             md.append(f"_{role}_\n")
         for key, label in [
             ("age_range", "Age"),
+            ("gender_presentation", "Gender"),
             ("body_type", "Body type"),
             ("face_shape", "Face shape"),
             ("hair_style", "Hair"),
@@ -212,6 +229,8 @@ def _character_sheet_files(characters: dict) -> dict[str, str]:
             ("main_outfit_description", "Outfit"),
             ("iconic_item", "Iconic item"),
             ("expression_style", "Expression style"),
+            ("pose_language", "Pose language"),
+            ("manga_panel_presence", "Panel presence"),
         ]:
             v = _safe(details.get(key))
             if v:

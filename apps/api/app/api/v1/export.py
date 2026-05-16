@@ -139,7 +139,7 @@ def export_visuals_bundle(
     all_scripts = _all_chapter_scripts(story_id, registry)
 
     visuals_md = _lines_to_markdown(_assemble_visuals_lines(files, all_scripts=all_scripts))
-    panels_csv = _panels_csv(all_scripts)
+    panels_csv = _panels_csv(all_scripts, plot_outline=files.get("plot_outline") or {})
     sheet_files = _character_sheet_files(characters)
     prompt_files = _ai_prompt_files(characters)
 

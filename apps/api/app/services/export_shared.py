@@ -58,6 +58,11 @@ def _as_list(v: object) -> list:
 
 def _text_list(v: object) -> list[str]:
     out: list[str] = []
+    # Audit fix #4: a profile field stored as a string (common — distinctive_features
+    # often comes in as one comma-separated string) silently disappeared because
+    # _as_list returned []. Wrap a string into a single-item list before iterating.
+    if isinstance(v, str) and v.strip():
+        v = [v]
     for item in _as_list(v):
         if isinstance(item, str):
             text = _safe(item)
@@ -213,6 +218,19 @@ def _build_loc_by_id(po: dict) -> dict[str, dict]:
             lid = _safe(loc.get("location_id"))
             if lid:
                 out[lid] = loc
+    return out
+
+
+def _build_scene_by_id(po: dict) -> dict[str, dict]:
+    """Map scene_id → scene dict from plot_outline. Used by export to look up
+    scene-level metadata (time-of-day, location) for per-panel fallbacks."""
+    scenes_block = (po.get("scene_cards") or {})
+    out: dict[str, dict] = {}
+    for scene in _as_list(scenes_block.get("scenes", [])):
+        if isinstance(scene, dict):
+            sid = _safe(scene.get("scene_id"))
+            if sid:
+                out[sid] = scene
     return out
 
 

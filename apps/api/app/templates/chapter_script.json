@@ -172,7 +172,9 @@
             "custom_pacing": ""
           },
           "continuity_notes": "",
-          "custom_panel_details": ""
+          "custom_panel_details": "",
+          "lighting": "",
+          "characters_in_panel": []
         }
       ]
     }

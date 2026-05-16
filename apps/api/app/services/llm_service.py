@@ -188,11 +188,15 @@ class LLMService:
         speaker_rule = (
             f"IMPORTANT — speaker_name in every dialogue entry MUST be exactly one of these names: "
             f"{allowed_speakers}. "
-            "You may also use 'Narrator' for caption/narration text. "
-            "For unnamed background extras use 'Background Character'. "
-            "Do NOT invent any other speaker names."
+            "Do NOT invent any character names that aren't in this list. "
+            "For ambient lines (TV/radio/intercom/PA/crowd/sign text) — DO NOT add them as dialogue. "
+            "Either put the words in the panel's 'narration' field (caption box), "
+            "OR add the line with speech_bubble_type='Off-Screen' and speaker_name set to the source "
+            "(e.g. 'TV', 'Radio', 'PA') — these are treated as ambient voices, not characters. "
+            "For pure scene-narration caption text use speech_bubble_type='Narration' with speaker_name='Narrator'."
         ) if allowed_speakers else (
-            "Use 'Narrator' for narration text and 'Background Character' for unnamed extras."
+            "No named characters in scope. Use the 'narration' field for caption text. "
+            "For ambient voices use speech_bubble_type='Off-Screen' with a source label like 'TV' or 'Radio'."
         )
         system = (
             "You are the Manga Maker panel script generator. "

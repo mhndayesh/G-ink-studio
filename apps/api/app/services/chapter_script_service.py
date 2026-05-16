@@ -1344,19 +1344,63 @@ class ChapterScriptService:
                     if ai_panel["pacing"] in opts:
                         target["pacing"]["selected"] = ai_panel["pacing"]
                 if isinstance(ai_panel.get("dialogue"), list):
-                    target["dialogue"] = [
-                        {
-                            "speaker_id": "",
-                            "speaker_name": d.get("speaker_name", ""),
-                            "text": d.get("text", ""),
-                            "speech_bubble_type": {
-                                "selected": d.get("speech_bubble_type", "Normal"),
-                                "options": ["Normal", "Shout", "Whisper", "Thought", "Narration", "Off-Screen", "Monster / Distorted", "Custom"],
-                                "custom_bubble_type": "",
-                            },
-                        }
-                        for d in ai_panel["dialogue"] if isinstance(d, dict)
-                    ]
+                    # Build a lowercase set of valid character speakers from the story.
+                    # Anything outside this set is treated as an ambient voice and forced
+                    # to Off-Screen bubble (or merged into narration) so the validator
+                    # and downstream pipeline don't flag it as a missing profile.
+                    _valid = {c["name"].lower() for c in characters_context if c.get("name")}
+                    _ambient_ok = {"narrator", "narration"}
+                    coerced_dialogue: list[dict[str, Any]] = []
+                    appended_narration: list[str] = []
+                    for d in ai_panel["dialogue"]:
+                        if not isinstance(d, dict):
+                            continue
+                        speaker_raw = (d.get("speaker_name") or "").strip()
+                        text = (d.get("text") or "").strip()
+                        bubble_raw = (d.get("speech_bubble_type") or "Normal").strip()
+                        if not text:
+                            continue
+                        is_valid_char = speaker_raw.lower() in _valid
+                        is_narration = bubble_raw in ("Narration",) or speaker_raw.lower() in _ambient_ok
+                        is_offscreen = bubble_raw in ("Off-Screen", "Monster / Distorted")
+                        if is_valid_char or is_offscreen:
+                            # Keep as dialogue, original bubble type
+                            bubble = bubble_raw if bubble_raw in (
+                                "Normal", "Shout", "Whisper", "Thought", "Narration",
+                                "Off-Screen", "Monster / Distorted", "Custom",
+                            ) else "Normal"
+                            coerced_dialogue.append({
+                                "speaker_id": "",
+                                "speaker_name": speaker_raw,
+                                "text": text,
+                                "speech_bubble_type": {
+                                    "selected": bubble,
+                                    "options": ["Normal", "Shout", "Whisper", "Thought", "Narration", "Off-Screen", "Monster / Distorted", "Custom"],
+                                    "custom_bubble_type": "",
+                                },
+                            })
+                        elif is_narration:
+                            # Merge into narration caption text instead of inventing a speaker
+                            appended_narration.append(text)
+                        else:
+                            # Unknown speaker → demote to Off-Screen ambient voice so it
+                            # doesn't pollute the cast (audit root-fix for "Background Character")
+                            label = speaker_raw or "Off-Screen Voice"
+                            coerced_dialogue.append({
+                                "speaker_id": "",
+                                "speaker_name": label,
+                                "text": text,
+                                "speech_bubble_type": {
+                                    "selected": "Off-Screen",
+                                    "options": ["Normal", "Shout", "Whisper", "Thought", "Narration", "Off-Screen", "Monster / Distorted", "Custom"],
+                                    "custom_bubble_type": "",
+                                },
+                            })
+                    target["dialogue"] = coerced_dialogue
+                    if appended_narration:
+                        existing_narr = (target.get("narration") or "").strip()
+                        merged = " / ".join([existing_narr] + appended_narration) if existing_narr else " / ".join(appended_narration)
+                        target["narration"] = merged
                 if isinstance(ai_panel.get("sound_effects"), list):
                     target["sound_effects"] = [
                         {"sfx_text": s.get("sfx_text", ""), "sfx_meaning": s.get("sfx_meaning", ""), "sfx_style_note": ""}

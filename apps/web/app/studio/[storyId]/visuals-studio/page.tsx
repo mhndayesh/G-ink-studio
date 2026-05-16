@@ -27,6 +27,8 @@ const ALL_PANEL_FIELDS = [
   "mood",
   "narration",
   "location_id",
+  "lighting",
+  "characters_in_panel",
 ];
 
 type Panel_ = {
@@ -41,6 +43,8 @@ type Panel_ = {
   pose_or_body_language: string;
   mood: string;
   narration: string;
+  lighting?: string;
+  characters_in_panel?: string[];
 };
 
 type Page_ = {
@@ -76,10 +80,16 @@ function panelText(val: any): string {
 // Strip selection objects from text panel fields so they render as plain strings.
 function normalizePanel(pn: any): any {
   const TEXT_FIELDS = ["visual", "character_action", "background_details", "facial_expression",
-    "pose_or_body_language", "mood", "narration"];
+    "pose_or_body_language", "mood", "narration", "lighting"];
   const out = { ...pn };
   for (const f of TEXT_FIELDS) {
     if (out[f] !== undefined) out[f] = panelText(out[f]);
+  }
+  // characters_in_panel is array-typed — coerce to string[] (handle missing or scalar)
+  if (out.characters_in_panel === undefined || out.characters_in_panel === null) {
+    out.characters_in_panel = [];
+  } else if (!Array.isArray(out.characters_in_panel)) {
+    out.characters_in_panel = [String(out.characters_in_panel)];
   }
   return out;
 }
@@ -107,6 +117,12 @@ export default function VisualsStudioPage() {
   const locsQuery = useQuery({
     queryKey: ["locations", storyId],
     queryFn: () => api.listLocations(storyId),
+  });
+
+  // Characters list — used by the per-panel Characters multi-select (audit fix #6)
+  const charactersQuery = useQuery({
+    queryKey: ["characters", storyId],
+    queryFn: () => api.getCharacters(storyId),
   });
 
   // Load a chapter into the working slot before any fill/patch/approve operation.
@@ -137,6 +153,20 @@ export default function VisualsStudioPage() {
     return raw.map((pg: any) => ({ ...pg, panels: (pg.panels || []).map(normalizePanel) }));
   }, [scriptData]);
   const locations: any[] = useMemo(() => (locsQuery.data as any[]) || [], [locsQuery.data]);
+
+  // Combined major + side character list for the per-panel Characters multi-select.
+  // Stored as {id, name} so the UI can show names while persisting profile_id slugs.
+  const allCharacters: { id: string; name: string }[] = useMemo(() => {
+    const ch: any = charactersQuery.data || {};
+    const major = ch?.content?.created_major_character_profiles
+      || ch?.created_major_character_profiles || [];
+    const side = ch?.content?.created_side_character_profiles
+      || ch?.created_side_character_profiles || [];
+    const rows = [...major, ...side]
+      .filter((p: any) => p && (p.profile_id || p.character_name))
+      .map((p: any) => ({ id: p.profile_id || p.character_name, name: p.character_name || p.profile_id }));
+    return rows;
+  }, [charactersQuery.data]);
   const chapterTitle: string = scriptData?.chapter_metadata?.chapter_title || "";
   const chapterNum: string | number = scriptData?.chapter_metadata?.chapter_number || "";
   const currentChapterId: string = scriptData?.chapter_metadata?.chapter_id || "";
@@ -156,7 +186,7 @@ export default function VisualsStudioPage() {
     if (first) setSelectedChapterId(first.chapter_id);
   }, [allChapters, selectedChapterId]);
 
-  function updatePanel(pageIdx: number, panelIdx: number, key: string, value: string) {
+  function updatePanel(pageIdx: number, panelIdx: number, key: string, value: string | string[]) {
     const base = localPages ?? pages;
     const updated = base.map((pg, pi) => {
       if (pi !== pageIdx) return pg;
@@ -172,6 +202,18 @@ export default function VisualsStudioPage() {
       };
     });
     setLocalPages(updated);
+  }
+
+  // Toggle a character in/out of the panel's characters_in_panel list.
+  function togglePanelCharacter(pageIdx: number, panelIdx: number, charId: string) {
+    const base = localPages ?? pages;
+    const panel = base[pageIdx]?.panels[panelIdx];
+    if (!panel) return;
+    const current = Array.isArray(panel.characters_in_panel) ? panel.characters_in_panel : [];
+    const next = current.includes(charId)
+      ? current.filter((c) => c !== charId)
+      : [...current, charId];
+    updatePanel(pageIdx, panelIdx, "characters_in_panel", next);
   }
 
   function applyToPanel(pages_: Page_[], pageIdx: number, panelIdx: number, fields: Record<string, string>): Page_[] {
@@ -638,6 +680,46 @@ export default function VisualsStudioPage() {
                     />
                   </div>
 
+                  {/* Characters in panel (multi-select chips) — audit fix #6 */}
+                  {allCharacters.length > 0 && (
+                    <div>
+                      <div className="text-xs text-zinc-500 mb-1">Characters in this panel:</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {allCharacters.map((c) => {
+                          const selected = (panel.characters_in_panel || []).includes(c.id);
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => togglePanelCharacter(pageIdx, panelIdx, c.id)}
+                              className={[
+                                "text-xs rounded-full border px-2 py-0.5 transition-colors",
+                                selected
+                                  ? "bg-indigo-600 border-indigo-400 text-white"
+                                  : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-indigo-500 hover:text-zinc-200",
+                              ].join(" ")}
+                              title={c.id}
+                            >
+                              {c.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Lighting (free text) — audit fix #7 */}
+                  <div>
+                    <label className="text-xs text-zinc-500 block mb-1">Lighting:</label>
+                    <input
+                      type="text"
+                      value={panel.lighting || ""}
+                      onChange={(e) => updatePanel(pageIdx, panelIdx, "lighting", e.target.value)}
+                      placeholder="e.g. single cold light from cracked window, deep shadow fill"
+                      className="w-full text-xs bg-zinc-800 text-white border border-zinc-700 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
                   {/* Prompt preview */}
                   <div className="text-xs text-zinc-400 space-y-1">
                     {panelText(panel.visual) && <div><span className="text-zinc-600">Visual:</span> {panelText(panel.visual)}</div>}
@@ -646,6 +728,7 @@ export default function VisualsStudioPage() {
                     {panelText(panel.facial_expression) && <div><span className="text-zinc-600">Expression:</span> {panelText(panel.facial_expression)}</div>}
                     {panelText(panel.pose_or_body_language) && <div><span className="text-zinc-600">Pose:</span> {panelText(panel.pose_or_body_language)}</div>}
                     {panelText(panel.mood) && <div><span className="text-zinc-600">Mood:</span> {panelText(panel.mood)}</div>}
+                    {panelText(panel.lighting) && <div><span className="text-zinc-600">Lighting:</span> {panelText(panel.lighting)}</div>}
                     {panelText(panel.narration) && <div><span className="text-zinc-600">Narration:</span> {panelText(panel.narration)}</div>}
                     {locName && (
                       <div className="mt-1 text-indigo-400">📍 {locName}</div>

@@ -25,6 +25,7 @@ from app.services.export_shared import (
     _as_list,
     _build_id_to_name,
     _build_loc_by_id,
+    _build_scene_by_id,
     _chapter_header,
     _get_all_files,
     _lines_to_docx,
@@ -171,8 +172,27 @@ def _panel_named_cast_count(panel: dict) -> int:
     return len(names)
 
 
-def _panel_full_block(panel: dict, indent: str = "    ") -> list[str]:
-    """Render every production-relevant panel field for the artist."""
+def _panel_full_block(
+    panel: dict,
+    indent: str = "    ",
+    scene_time: str = "",
+    char_id_to_name: dict[str, str] | None = None,
+) -> list[str]:
+    """Render every production-relevant panel field for the artist.
+
+    ``scene_time`` is the scene's time-of-day (Night/Morning/Afternoon/Evening)
+    used as a fallback when the panel has no explicit ``lighting`` — audit item #7.
+
+    ``char_id_to_name`` maps character profile_id → display name. When the panel
+    has a ``characters_in_panel`` list, the Expression line is prefixed with the
+    resolved character name(s) — audit item #5.
+    """
+    char_id_to_name = char_id_to_name or {}
+    chars_in_panel = [_safe(c) for c in _as_list(panel.get("characters_in_panel")) if _safe(c)]
+    # Resolve names; fall back to the raw ID when no mapping exists
+    panel_char_names = [char_id_to_name.get(cid, cid) for cid in chars_in_panel]
+    expression_prefix = ", ".join(panel_char_names) + " — " if panel_char_names else ""
+
     out: list[str] = []
     panel_num = _safe(panel.get("panel_number") or panel.get("panel_id"))
     shot_block = panel.get("camera_shot")
@@ -204,7 +224,18 @@ def _panel_full_block(panel: dict, indent: str = "    ") -> list[str]:
         # BUNDLE-AUDIT #8: an "N/A …" expression on an object-only panel is noise.
         if key == "facial_expression" and v.strip().lower().startswith(("n/a", "none", "not applicable")):
             continue
-        out.append(f"{indent}  {label}: {v}")
+        # Audit fix #5 — character-attribute the Expression line when we know who's in frame
+        if key == "facial_expression":
+            out.append(f"{indent}  {label}: {expression_prefix}{v}")
+        else:
+            out.append(f"{indent}  {label}: {v}")
+    # Audit fix #6 — explicit per-panel character list (IDs or names)
+    if chars_in_panel:
+        out.append(f"{indent}  Characters: {', '.join(chars_in_panel)}")
+    # Audit fix #7 — explicit lighting, falling back to the scene's time-of-day
+    lighting = _safe(panel.get("lighting")) or scene_time
+    if lighting:
+        out.append(f"{indent}  Lighting: {lighting}")
     sfx_items = _as_list(panel.get("sound_effects"))
     sfx_parts = []
     for s in sfx_items:
@@ -303,6 +334,10 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
 
     # Build location_id → name lookup (shared by index + per-page headers)
     loc_by_id = _build_loc_by_id(po)
+    # Build scene_id → scene dict lookup (used for per-panel lighting fallback)
+    scenes_by_id = _build_scene_by_id(po)
+    # Build character_id → name lookup (used to attribute per-panel Expression: line — audit #5)
+    char_id_to_name = _build_id_to_name(files.get("characters", {}) or {})
 
     # Location index — cross-chapter usage map
     lines.extend(_location_index_lines(scripts, loc_by_id=loc_by_id))
@@ -387,9 +422,10 @@ def _assemble_visuals_lines(files: dict, all_scripts: list[dict] | None = None) 
                 lines.append(f"    Purpose: {page_purpose}")
             if page_mood:
                 lines.append(f"    Mood: {page_mood}")
+            scene_time = _safe((scenes_by_id.get(scene_id) or {}).get("time")) if scene_id else ""
             for panel in _as_list(page.get("panels")):
                 if isinstance(panel, dict):
-                    lines.extend(_panel_full_block(panel, indent="    "))
+                    lines.extend(_panel_full_block(panel, indent="    ", scene_time=scene_time, char_id_to_name=char_id_to_name))
         lines.append("")
 
     return lines

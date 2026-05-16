@@ -68,6 +68,10 @@ def _validate_export(files: dict, all_scripts: list[dict]) -> dict:
                 profile_names_lower.add(n.lower())
 
     speakers_seen: set[str] = set()
+    # Bubble types that mark ambient / non-character voices (TV, PA, radio, narration
+    # captions, monster effects). Speakers behind these bubbles are intentionally NOT
+    # real character profiles and must not raise missing_profile warnings.
+    AMBIENT_BUBBLES = {"narration", "off-screen", "monster / distorted"}
     for cs in all_scripts:
         for page in _as_list(cs.get("pages")):
             if not isinstance(page, dict):
@@ -78,11 +82,23 @@ def _validate_export(files: dict, all_scripts: list[dict]) -> dict:
                 for d in _as_list(panel.get("dialogue", [])):
                     if not isinstance(d, dict):
                         continue
+                    bubble_block = d.get("speech_bubble_type")
+                    bubble = (_safe(bubble_block.get("selected")) if isinstance(bubble_block, dict) else _safe(bubble_block)).lower()
+                    if bubble in AMBIENT_BUBBLES:
+                        continue  # ambient voice, not a character
                     speaker = _safe(d.get("speaker_name") or d.get("speaker") or d.get("speaker_id"))
                     if speaker:
                         speakers_seen.add(speaker.lower())
 
-    skip_speakers = {"narrator", "narration", "?", ""}
+    # Skip narrators, generic background labels, and obvious source voices —
+    # none of these need a real character profile.
+    skip_speakers = {
+        "narrator", "narration", "?", "",
+        "background character", "background", "extra", "crowd", "bystander",
+        "tv", "radio", "pa", "intercom", "loudspeaker", "phone", "voice",
+        "off-screen voice", "off-screen", "voice-over", "voice over", "vo",
+        "sign", "announcement", "anchor", "newscaster", "reporter",
+    }
     missing_speakers = sorted(s for s in speakers_seen if s not in skip_speakers and s not in profile_names_lower)
     for speaker in missing_speakers:
         warnings.append({

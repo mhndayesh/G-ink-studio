@@ -1,0 +1,11 @@
+{
+  "id": "lettering",
+  "name": "Auto Lettering",
+  "kind": "lettering",
+  "maxLineChars": 26,
+  "narrationAtTop": true,
+  "speechFontSize": 3.2,
+  "narrationFontSize": 3.0,
+  "sfxFontSize": 7.0,
+  "bubblePadding": 1.2
+}

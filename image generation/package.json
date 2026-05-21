@@ -1,0 +1,14 @@
+{
+  "name": "g-ink-v2",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspace web",
+    "test": "npm run test --workspace server && npm run build --workspace web",
+    "reset": "node server/src/seed.js --force",
+    "start": "node server/src/server.js"
+  }
+}

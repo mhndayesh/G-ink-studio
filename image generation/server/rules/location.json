@@ -1,0 +1,8 @@
+{
+  "id": "location",
+  "name": "Location Reference",
+  "kind": "location",
+  "maxLength": 240,
+  "template": "{{system}}, background art, environment, no people, {{appearance}}, {{lighting}}, {{mood}}",
+  "llmInstructions": "Write ONE short image-generation prompt describing this location as empty background art (no people), as a flat comma-separated list of concrete visual tags — never a sentence, never a paragraph, never a poem. Start with the exact system tags you are given. Then: the place, the key objects, the lighting, the atmosphere — drawn straight from the description, nothing invented. Plain concrete words only. Maximum {{maxLength}} characters. Output ONLY the comma-separated prompt — no labels, no quotes, no commentary."
+}

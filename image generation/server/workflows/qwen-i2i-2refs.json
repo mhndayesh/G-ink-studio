@@ -1,0 +1,18 @@
+{
+  "1":  { "class_type": "VAEEncode",               "inputs": { "pixels": ["27", 0], "vae": ["2", 0] } },
+  "2":  { "class_type": "VAELoader",               "inputs": { "vae_name": "Qwen_Image-VAE.safetensors" } },
+  "3":  { "class_type": "KSampler",                "inputs": { "seed": 0, "steps": 4, "cfg": 2, "sampler_name": "euler", "scheduler": "normal", "denoise": 1, "model": ["6", 0], "positive": ["13", 0], "negative": ["10", 0], "latent_image": ["1", 0] } },
+  "4":  { "class_type": "UnetLoaderGGUF",          "inputs": { "unet_name": "qwen-image-edit-Q4_0.gguf" } },
+  "5":  { "class_type": "CLIPLoaderGGUF",          "inputs": { "clip_name": "qwen2.5-vl-7b-instruct-q4_k_m.gguf", "type": "qwen_image" } },
+  "6":  { "class_type": "LoraLoader",              "inputs": { "model": ["4", 0], "clip": ["5", 0], "lora_name": "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors", "strength_model": 1, "strength_clip": 1 } },
+  "7":  { "class_type": "TextEncodeQwenImageEdit", "inputs": { "clip": ["6", 1], "vae": ["2", 0], "image": ["27", 0], "prompt": "" } },
+  "8":  { "class_type": "VAEDecode",               "inputs": { "samples": ["3", 0], "vae": ["2", 0] } },
+  "9":  { "class_type": "SaveImage",               "inputs": { "images": ["12", 0], "filename_prefix": "ComfyUI" } },
+  "10": { "class_type": "CLIPTextEncode",          "inputs": { "clip": ["11", 0], "text": "" } },
+  "11": { "class_type": "UnloadAllModels",         "inputs": { "value": ["6", 1] } },
+  "12": { "class_type": "UnloadAllModels",         "inputs": { "value": ["8", 0] } },
+  "13": { "class_type": "UnloadAllModels",         "inputs": { "value": ["7", 0] } },
+  "23": { "class_type": "LoadImage",               "inputs": { "image": "reference.png" } },
+  "24": { "class_type": "LoadImage",               "inputs": { "image": "reference2.png" } },
+  "27": { "class_type": "ImageStitch",             "inputs": { "image1": ["23", 0], "image2": ["24", 0], "direction": "right", "match_image_size": true, "spacing_width": 0, "spacing_color": "white" } }
+}

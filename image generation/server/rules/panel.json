@@ -1,0 +1,16 @@
+{
+  "id": "panel",
+  "name": "Manga Panel Prompt",
+  "kind": "panel",
+  "maxLength": 440,
+  "letteringClause": "leave clear empty space at the top of the panel for a speech bubble",
+  "letteringSentence": " Leave clear empty space at the top of the panel for a speech bubble.",
+  "templates": {
+    "t2i": "{{system}}, {{characters}}, {{action}}, {{cameraShot}}, {{location}}, {{mood}}{{letteringClauseComma}}",
+    "i2i": "Using the reference image of {{refCharacter}}, draw {{refPronoun}} in this scene: {{location}}. {{action}}.{{otherCharsClause}} {{cameraShot}} composition. {{system}}.{{moodClause}}{{letteringSentence}}",
+    "i2i-2refs": "Using the two reference images of {{refCharacter}}, draw them together in this scene: {{location}}. {{action}}. {{cameraShot}} composition. {{system}}.{{moodClause}}{{letteringSentence}}"
+  },
+  "template": "{{system}}, {{characters}}, {{action}}, {{cameraShot}}, {{location}}, {{mood}}{{letteringClauseComma}}",
+  "maxLengthI2I": 600,
+  "llmInstructions": "Panel prompts are assembled deterministically from the camera shot, the characters' compiled visual tags, the location's compiled visual tags, and the mood. The only LLM step here is translating the prose mood into 3-5 visual lighting/atmosphere tags. Output ONLY a short comma-separated tag list of lighting and atmosphere, nothing else."
+}

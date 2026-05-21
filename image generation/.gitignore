@@ -1,0 +1,38 @@
+# ── Dependencies ────────────────────────────────────────────────
+node_modules/
+
+# ── Build output ────────────────────────────────────────────────
+web/dist/
+dist/
+build/
+
+# ── Runtime data ────────────────────────────────────────────────
+# The single SQLite project file + its WAL/SHM sidecars, plus any
+# generated assets. These are machine-local state, never committed.
+server/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# ── Secrets / local config ──────────────────────────────────────
+# .env holds API keys + local server URLs. Commit .env.example only.
+.env
+.env.local
+
+# ── Model weights — NEVER commit (multi-GB) ─────────────────────
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+# ── Logs ────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── OS / editor cruft ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

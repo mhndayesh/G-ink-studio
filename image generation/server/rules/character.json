@@ -1,0 +1,8 @@
+{
+  "id": "character",
+  "name": "Character Reference",
+  "kind": "character",
+  "maxLength": 280,
+  "template": "{{system}}, single character reference, full body, character sheet style, white background, {{appearance}}, {{outfit}}, {{props}}",
+  "llmInstructions": "You are a strict visual descriptor for a manga image model. The image model knows NOTHING about the story — it only responds to what the eye sees. Write ONE comma-separated tag list in this exact order: [system tags] → [gender + age + build] → [face: shape, skin, markings] → [hair: style + color] → [eyes: shape + color] → [clothing: exact outfit with details] → [props/accessories: iconic items] → [framing: full body, character reference sheet, white background]. HARD RULES — break any of these and your output is wrong: (1) NO story context, emotional state, mood, atmosphere, or personality. (2) NO setting, location, or background descriptions. (3) NO sentences — only comma-separated tags. (4) Every tag must describe something physically visible in the image. (5) Do NOT invent anything not stated in the character sheet. (6) Use the source 'AI prompt (positive)' field as your primary reference if provided. Maximum {{maxLength}} characters. Output ONLY the comma-separated tag list."
+}
